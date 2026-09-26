@@ -6,6 +6,7 @@ import {
   Loader2,
   LocateFixed,
   MapPin,
+  MapPinned,
   Mic,
   MicOff,
   Save,
@@ -24,19 +25,20 @@ import { useData } from "../state/DataContext.jsx";
 import { useToast } from "../state/ToastContext.jsx";
 import { PriorityBadge } from "../components/ui/Badge.jsx";
 import { saveDraft } from "../services/complaintRepository.js";
+import LocationPickerModal from "../components/map/LocationPickerModal.jsx";
 
 // ─── Voice input hook ─────────────────────────────────────────────────────────
-// Uses the Web Speech API with continuous listening so the user can speak
-// naturally in Hindi, English, or a mix (Hinglish). Falls back gracefully when
-// the browser doesn't support it.
+// Uses the Web Speech API in NON-continuous mode (one press = one session).
+// Each session gives one clean final transcript — no repeated words.
+// Language is set to hi-IN which handles Hinglish (mixed Hindi+English) well.
 
-const SPEECH_LANGS = ["hi-IN", "en-IN"];
-
-function useSpeechInput(onTranscript) {
+function useSpeechInput() {
   const recognitionRef = useRef(null);
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(true);
   const [interim, setInterim] = useState("");
+  // Each completed session produces one final string; caller decides how to use it
+  const [lastFinal, setLastFinal] = useState(null);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -44,42 +46,53 @@ function useSpeechInput(onTranscript) {
       setSupported(false);
       return;
     }
+
     const recognition = new SpeechRecognition();
-    recognition.continuous = true;
+    // NON-continuous: one session ends naturally after silence → no repeated words
+    recognition.continuous = false;
     recognition.interimResults = true;
-    // Use hi-IN as the primary language; the API will still handle English
-    // words (common in Hinglish) very well at this locale.
-    recognition.lang = SPEECH_LANGS[0];
+    // hi-IN handles Hinglish (English words mixed in Hindi speech) very well.
+    // The browser also falls back to en-IN words automatically.
+    recognition.lang = "hi-IN";
     recognition.maxAlternatives = 1;
+
+    let sessionFinal = "";
+
+    recognition.onstart = () => {
+      sessionFinal = "";
+      setInterim("");
+    };
 
     recognition.onresult = (event) => {
       let interimText = "";
-      let finalText = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
+      for (let i = 0; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalText += transcript + " ";
+          sessionFinal += t + " ";
         } else {
-          interimText += transcript;
+          interimText = t; // Only show the current in-progress word(s)
         }
       }
-      if (finalText) onTranscript(finalText);
       setInterim(interimText);
     };
 
     recognition.onerror = (event) => {
       if (event.error !== "no-speech") {
         setListening(false);
+        setInterim("");
       }
     };
 
     recognition.onend = () => {
       setListening(false);
       setInterim("");
+      // Emit the clean final string once per session
+      const clean = sessionFinal.trim();
+      if (clean) setLastFinal(clean);
     };
 
     recognitionRef.current = recognition;
-  }, [onTranscript]);
+  }, []);
 
   const startListening = useCallback(() => {
     if (!recognitionRef.current) return;
@@ -94,11 +107,9 @@ function useSpeechInput(onTranscript) {
   const stopListening = useCallback(() => {
     if (!recognitionRef.current) return;
     recognitionRef.current.stop();
-    setListening(false);
-    setInterim("");
   }, []);
 
-  return { listening, supported, interim, startListening, stopListening };
+  return { listening, supported, interim, lastFinal, startListening, stopListening };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -117,7 +128,6 @@ export default function ReportIssue() {
 
   const [description, setDescription] = useState("");
   const [image, setImage] = useState(null);
-  const [imageFile, setImageFile] = useState(null);
   const [imageMeta, setImageMeta] = useState(null);
   const [location, setLocation] = useState(null);
   const [locating, setLocating] = useState(false);
@@ -128,14 +138,20 @@ export default function ReportIssue() {
   const [duplicate, setDuplicate] = useState(null);
   const [busy, setBusy] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [showMapPicker, setShowMapPicker] = useState(false);
 
-  // Append recognised speech to description
-  const handleSpeechTranscript = useCallback((text) => {
-    setDescription((prev) => (prev ? prev.trimEnd() + " " + text.trim() : text.trim()));
-  }, []);
+  // Voice input — append each clean session result to description
+  const { listening, supported: speechSupported, interim, lastFinal, startListening, stopListening } =
+    useSpeechInput();
 
-  const { listening, supported: speechSupported, interim, startListening, stopListening } =
-    useSpeechInput(handleSpeechTranscript);
+  // Whenever a new final transcript arrives, append it to the description
+  const lastFinalRef = useRef(null);
+  useEffect(() => {
+    if (lastFinal && lastFinal !== lastFinalRef.current) {
+      lastFinalRef.current = lastFinal;
+      setDescription((prev) => (prev ? prev.trimEnd() + " " + lastFinal : lastFinal));
+    }
+  }, [lastFinal]);
 
   const selectedZone = useMemo(
     () => zoneState?.zone || regionZones.find((zone) => zone.zoneId === manualZoneId) || null,
@@ -143,20 +159,6 @@ export default function ReportIssue() {
   );
   const areaLabel = isPolygonRegion ? geoIntel?.ward?.name : selectedZone?.name;
   const canSubmitLocation = isPolygonRegion ? Boolean(location) : Boolean(selectedZone);
-
-  // Resolve location from EXIF then optionally from browser GPS
-  async function resolveLocationFromExifOrGps(file, gpsFromExif) {
-    if (gpsFromExif) {
-      setLocation(gpsFromExif);
-      showToast("📍 Location auto-detected from photo metadata.");
-      try {
-        const intel = await resolveLocationIntelligence(gpsFromExif, region);
-        applyLocationIntelligence(intel);
-      } catch {
-        // Non-fatal — user can capture manually
-      }
-    }
-  }
 
   function applyLocationIntelligence(intel) {
     if (intel.geoMode === "circle") {
@@ -173,8 +175,18 @@ export default function ReportIssue() {
       showToast(
         intel.ward
           ? `Detected ${areaTypeLabel} ${intel.ward.number} - ${intel.ward.name}.`
-          : `Location captured, but it falls outside mapped ${region.name} ${areaTypeLabel.toLowerCase()}s.`,
+          : `Location captured, but outside mapped ${region.name} ${areaTypeLabel.toLowerCase()}s.`,
       );
+    }
+  }
+
+  async function resolveGps(gps) {
+    setLocation(gps);
+    try {
+      const intel = await resolveLocationIntelligence(gps, region);
+      applyLocationIntelligence(intel);
+    } catch {
+      // Non-fatal
     }
   }
 
@@ -184,15 +196,13 @@ export default function ReportIssue() {
       const compressed = await compressImageToBase64(file);
       setImage(compressed.imageData);
       setImageMeta(compressed);
-      setImageFile(file);
       showToast("Photo captured. Checking for embedded location…");
-
-      // Try EXIF GPS first — don't require it
       const gpsFromExif = await extractExifGps(file);
       if (gpsFromExif) {
-        await resolveLocationFromExifOrGps(file, gpsFromExif);
+        await resolveGps({ ...gpsFromExif });
+        showToast("📍 Location auto-detected from photo metadata.");
       } else {
-        showToast("No GPS in photo. Use 'Capture GPS location' to set it.");
+        showToast("No GPS in photo. Use 'Capture GPS' or pick on map.");
       }
     } catch (error) {
       showToast(error.message, "error");
@@ -203,15 +213,22 @@ export default function ReportIssue() {
     setLocating(true);
     try {
       const gps = await getBrowserLocation();
-      setLocation(gps);
-      const intel = await resolveLocationIntelligence(gps, region);
-      applyLocationIntelligence(intel);
+      await resolveGps(gps);
     } catch (error) {
-      showToast(error.message || "Location permission denied.", "error");
+      showToast(
+        (error.message || "Location permission denied.") + " — You can also pick on the map.",
+        "error",
+      );
       setZoneState({ zone: null, status: "manual" });
     } finally {
       setLocating(false);
     }
+  }
+
+  async function handleMapPickConfirm(coords) {
+    setShowMapPicker(false);
+    showToast("Resolving map location…");
+    await resolveGps({ ...coords, accuracy: null, fromMap: true });
   }
 
   async function analyze() {
@@ -229,7 +246,6 @@ export default function ReportIssue() {
         regionId: region.regionId,
       });
       setAi(result);
-
       const candidate = {
         regionId: region.regionId,
         zoneId: selectedZone?.zoneId,
@@ -283,7 +299,7 @@ export default function ReportIssue() {
         country: region.country,
         municipality: region.municipality || "",
       });
-      showToast("Draft saved! You can complete it later from My Complaints.");
+      showToast("Draft saved! Complete it later from My Complaints.");
       navigate("/my-complaints");
     } catch (error) {
       showToast(error.message || "Could not save draft.", "error");
@@ -299,16 +315,13 @@ export default function ReportIssue() {
       return;
     }
     if (!canSubmitLocation) {
-      showToast("Capture location or choose a zone.", "error");
+      showToast("Capture location, pick on map, or choose a zone.", "error");
       return;
     }
     const classification = ai || (await analyze());
     if (!classification) return;
     if (duplicate) {
-      showToast(
-        "A likely duplicate exists. Support it or confirm you need a separate report.",
-        "error",
-      );
+      showToast("A likely duplicate exists. Support it or confirm you need a separate report.", "error");
       return;
     }
     setBusy(true);
@@ -391,353 +404,380 @@ export default function ReportIssue() {
   }
 
   return (
-    <section className="section">
-      <div className="mb-6">
-        <p className="eyebrow">Report in under one minute</p>
-        <h1 className="page-title">Report a civic issue</h1>
-      </div>
+    <>
+      {/* Map picker modal */}
+      {showMapPicker && (
+        <LocationPickerModal
+          initialCenter={location || { latitude: region.defaultCenterLat, longitude: region.defaultCenterLng }}
+          onConfirm={handleMapPickConfirm}
+          onClose={() => setShowMapPicker(false)}
+        />
+      )}
 
-      <form className="grid gap-6 lg:grid-cols-[1fr_0.78fr]" onSubmit={createNewComplaint}>
-        <div className="card space-y-5 p-5">
-
-          {/* ── Photo capture (live camera only) ── */}
-          <div>
-            <span className="mb-2 block text-sm font-bold">Issue photo</span>
-            <div className="grid min-h-64 place-items-center rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 p-4 transition hover:border-civic/40 hover:bg-teal-50/40">
-              {image ? (
-                <img
-                  src={image}
-                  alt="Captured complaint evidence"
-                  className="max-h-80 rounded-lg object-contain shadow-card"
-                />
-              ) : (
-                <div className="text-center text-slate-500">
-                  <span className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-full bg-teal-50 text-civic ring-4 ring-teal-100">
-                    <Camera size={20} />
-                  </span>
-                  <p className="text-sm">
-                    Click a <strong>live photo</strong> of the issue.
-                    <br />
-                    <span className="text-xs text-slate-400">
-                      Live photos ensure authenticity. Gallery upload is disabled.
-                    </span>
-                  </p>
-                </div>
-              )}
-              <div className="mt-4 w-full">
-                <button
-                  type="button"
-                  className="btn-primary w-full"
-                  onClick={() => cameraInputRef.current?.click()}
-                >
-                  <Camera size={17} />
-                  {image ? "Retake photo" : "Take live photo"}
-                </button>
-              </div>
-              {/* Live camera only — no gallery */}
-              <input
-                ref={cameraInputRef}
-                className="hidden"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={(event) => handleImage(event.target.files?.[0])}
-              />
-            </div>
-          </div>
-
-          {/* ── Voice / text description ── */}
-          <div>
-            <span className="mb-2 block text-sm font-bold">
-              Describe the issue
-              <span className="ml-2 text-xs font-normal text-slate-500">
-                — speak in Hindi or English
-              </span>
-            </span>
-
-            {/* Voice button */}
-            {speechSupported ? (
-              <div className="mb-3">
-                <button
-                  type="button"
-                  onClick={listening ? stopListening : startListening}
-                  className={`inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm font-semibold transition duration-150 ${
-                    listening
-                      ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
-                      : "border-slate-200 bg-white text-ink shadow-sm hover:border-civic/60 hover:text-civic hover:shadow-card"
-                  }`}
-                >
-                  {listening ? (
-                    <>
-                      <MicOff size={17} className="animate-pulse" />
-                      Stop recording
-                    </>
-                  ) : (
-                    <>
-                      <Mic size={17} />
-                      {description ? "Continue speaking" : "Start voice description"}
-                    </>
-                  )}
-                </button>
-
-                {/* Live interim transcript */}
-                {listening && interim && (
-                  <div className="mt-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800 italic">
-                    <span className="mr-1 font-semibold not-italic text-teal-600">Hearing:</span>
-                    {interim}
-                    <span className="ml-1 animate-pulse">…</span>
-                  </div>
-                )}
-
-                {listening && (
-                  <p className="mt-1 text-xs text-slate-500 text-center">
-                    🎙️ Listening… speak clearly in Hindi or English
-                  </p>
-                )}
-              </div>
-            ) : (
-              <p className="mb-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                Voice input is not supported in this browser. Please use Chrome or Safari.
-              </p>
-            )}
-
-            {/* Text area — editable, pre-filled from voice */}
-            <textarea
-              className="field min-h-28"
-              required
-              maxLength={420}
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="Example: Streetlight near hostel walkway has been off for three nights."
-            />
-            <div className="mt-1 flex items-center justify-between">
-              <span className="text-xs text-slate-500">{description.length}/420 characters</span>
-              {description.length > 0 && (
-                <button
-                  type="button"
-                  className="text-xs text-slate-400 hover:text-red-500 transition"
-                  onClick={() => setDescription("")}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* ── Location controls ── */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={captureLocation}
-              disabled={locating}
-            >
-              <LocateFixed size={17} />
-              {locating ? "Locating..." : location ? "Re-capture GPS" : "Capture GPS location"}
-            </button>
-            <button type="button" className="btn-secondary" onClick={analyze} disabled={busy}>
-              <Sparkles size={17} />
-              Run AI triage
-            </button>
-          </div>
-
-          {location?.fromExif && (
-            <p className="rounded-md bg-teal-50 px-3 py-2 text-xs text-teal-800">
-              📍 Location auto-read from photo EXIF metadata. Use "Re-capture GPS" to override with
-              your current position.
-            </p>
-          )}
-
-          {!isPolygonRegion && (
-            <label className="block">
-              <span className="mb-2 block text-sm font-bold">Detected or manual zone</span>
-              <select
-                className="field"
-                value={manualZoneId}
-                onChange={(event) => setManualZoneId(event.target.value)}
-              >
-                <option value="">Unmapped / Verify manually</option>
-                {regionZones.map((zone) => (
-                  <option key={zone.zoneId} value={zone.zoneId}>
-                    {zone.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          {/* ── Save as Draft (quick-capture shortcut) ── */}
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-700">
-              🚦 In a hurry? Save photo as draft
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Just take a photo and tap below — you can add the description and submit later from{" "}
-              <strong>My Complaints</strong>.
-            </p>
-            <button
-              type="button"
-              className="btn-secondary mt-3 w-full"
-              onClick={handleSaveDraft}
-              disabled={!image || savingDraft}
-            >
-              {savingDraft ? <Loader2 size={17} className="animate-spin" /> : <Save size={17} />}
-              {savingDraft ? "Saving…" : "Save as incomplete draft"}
-            </button>
-          </div>
+      <section className="section">
+        <div className="mb-6">
+          <p className="eyebrow">Report in under one minute</p>
+          <h1 className="page-title">Report a civic issue</h1>
         </div>
 
-        {/* ── Right sidebar ── */}
-        <aside className="space-y-4">
-          <div className="card p-5">
-            <h2 className="flex items-center gap-2 text-lg font-black">
-              <MapPin size={18} className="text-civic" /> Submission intelligence
-            </h2>
-            <div className="mt-4 space-y-2 text-sm">
-              <p>
-                {isPolygonRegion ? "City" : "Region"}: <strong>{region.name}</strong>
-              </p>
-              <p>
-                GPS:{" "}
-                {location
-                  ? `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}${location.fromExif ? " (from photo)" : ` (${Math.round(location.accuracy || 0)}m)`}`
-                  : "Not captured"}
-              </p>
-              {isPolygonRegion ? (
-                <>
-                  <p>
-                    {areaTypeLabel}:{" "}
-                    <strong>
-                      {geoIntel?.ward
-                        ? `${geoIntel.ward.number} - ${geoIntel.ward.name}`
-                        : location
-                          ? `Outside mapped ${areaTypeLabel.toLowerCase()}s`
-                          : "Not captured"}
-                    </strong>
-                  </p>
-                  <p>
-                    Zone:{" "}
-                    <strong>{geoIntel?.zone ? `Zone ${geoIntel.zone.number}` : "-"}</strong>
-                  </p>
-                  <p>Locality: {geoIntel?.address?.locality || "-"}</p>
-                  <p>Address: {geoIntel?.address?.formattedAddress || "-"}</p>
-                  {location && !geoIntel?.ward && (
-                    <p className="rounded-md bg-amber-50 p-3 text-amber-900">
-                      This location is outside the mapped {region.name}{" "}
-                      {areaTypeLabel.toLowerCase()} boundaries. It can still be submitted, but no{" "}
-                      {areaTypeLabel.toLowerCase()} will be attached.
+        <form className="grid gap-6 lg:grid-cols-[1fr_0.78fr]" onSubmit={createNewComplaint}>
+          <div className="card space-y-5 p-5">
+
+            {/* ── Photo capture (live camera only) ── */}
+            <div>
+              <span className="mb-2 block text-sm font-bold">Issue photo</span>
+              <div className="grid min-h-64 place-items-center rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 p-4 transition hover:border-civic/40 hover:bg-teal-50/40">
+                {image ? (
+                  <img
+                    src={image}
+                    alt="Captured complaint evidence"
+                    className="max-h-80 rounded-lg object-contain shadow-card"
+                  />
+                ) : (
+                  <div className="text-center text-slate-500">
+                    <span className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-full bg-teal-50 text-civic ring-4 ring-teal-100">
+                      <Camera size={20} />
+                    </span>
+                    <p className="text-sm">
+                      Click a <strong>live photo</strong> of the issue.
+                      <br />
+                      <span className="text-xs text-slate-400">
+                        Live photos ensure authenticity. Gallery upload is disabled.
+                      </span>
                     </p>
+                  </div>
+                )}
+                <div className="mt-4 w-full">
+                  <button
+                    type="button"
+                    className="btn-primary w-full"
+                    onClick={() => cameraInputRef.current?.click()}
+                  >
+                    <Camera size={17} />
+                    {image ? "Retake photo" : "Take live photo"}
+                  </button>
+                </div>
+                <input
+                  ref={cameraInputRef}
+                  className="hidden"
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(event) => handleImage(event.target.files?.[0])}
+                />
+              </div>
+            </div>
+
+            {/* ── Voice / text description ── */}
+            <div>
+              <span className="mb-2 block text-sm font-bold">
+                Describe the issue
+                <span className="ml-2 text-xs font-normal text-slate-500">
+                  — Hindi या English में बोलें
+                </span>
+              </span>
+
+              {speechSupported ? (
+                <div className="mb-3">
+                  <button
+                    type="button"
+                    onClick={listening ? stopListening : startListening}
+                    className={`inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm font-semibold transition duration-150 ${
+                      listening
+                        ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+                        : "border-slate-200 bg-white text-ink shadow-sm hover:border-civic/60 hover:text-civic hover:shadow-card"
+                    }`}
+                  >
+                    {listening ? (
+                      <>
+                        <MicOff size={17} className="animate-pulse" />
+                        Stop recording
+                      </>
+                    ) : (
+                      <>
+                        <Mic size={17} />
+                        {description ? "Add more by voice" : "Start voice description"}
+                      </>
+                    )}
+                  </button>
+
+                  {/* Live interim preview while speaking */}
+                  {listening && (
+                    <div className="mt-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
+                      {interim ? (
+                        <span className="italic">{interim}<span className="animate-pulse">…</span></span>
+                      ) : (
+                        <span className="text-teal-600">🎙️ Listening… speak in Hindi or English</span>
+                      )}
+                    </div>
                   )}
-                </>
+                </div>
               ) : (
-                <>
-                  <p>
-                    Zone: <strong>{selectedZone?.name || "Unmapped / Verify"}</strong>
-                  </p>
-                  {zoneState?.status === "outside" && (
-                    <p className="rounded-md bg-amber-50 p-3 text-amber-900">
-                      Nearest configured zone is {zoneState.nearestZone?.name}, but GPS is outside
-                      its radius.
-                    </p>
-                  )}
-                </>
+                <p className="mb-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Voice input is not supported in this browser. Please use Chrome or Safari.
+                </p>
               )}
+
+              <textarea
+                className="field min-h-28"
+                required
+                maxLength={420}
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="Example: Streetlight near hostel walkway has been off for three nights."
+              />
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-xs text-slate-500">{description.length}/420 characters</span>
+                {description.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-xs text-slate-400 hover:text-red-500 transition"
+                    onClick={() => setDescription("")}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* ── Location controls ── */}
+            <div>
+              <span className="mb-2 block text-sm font-bold">Location</span>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={captureLocation}
+                  disabled={locating}
+                >
+                  <LocateFixed size={17} />
+                  {locating ? "Locating…" : location ? "Re-capture GPS" : "Capture GPS"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setShowMapPicker(true)}
+                >
+                  <MapPinned size={17} />
+                  Pick on map
+                </button>
+              </div>
+
+              {location && (
+                <p className="mt-2 rounded-md bg-teal-50 px-3 py-1.5 text-xs text-teal-800">
+                  📍{" "}
+                  {location.fromExif
+                    ? "From photo metadata"
+                    : location.fromMap
+                      ? "Picked on map"
+                      : `GPS (±${Math.round(location.accuracy || 0)}m)`}{" "}
+                  — {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
+                </p>
+              )}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button type="button" className="btn-secondary" onClick={analyze} disabled={busy}>
+                <Sparkles size={17} />
+                Run AI triage
+              </button>
+              <div /> {/* spacer */}
+            </div>
+
+            {!isPolygonRegion && (
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold">Detected or manual zone</span>
+                <select
+                  className="field"
+                  value={manualZoneId}
+                  onChange={(event) => setManualZoneId(event.target.value)}
+                >
+                  <option value="">Unmapped / Verify manually</option>
+                  {regionZones.map((zone) => (
+                    <option key={zone.zoneId} value={zone.zoneId}>
+                      {zone.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {/* ── Save as Draft ── */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-700">🚦 In a hurry? Save as draft</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Take a photo and save — add description and submit later from{" "}
+                <strong>My Complaints</strong>.
+              </p>
+              <button
+                type="button"
+                className="btn-secondary mt-3 w-full"
+                onClick={handleSaveDraft}
+                disabled={!image || savingDraft}
+              >
+                {savingDraft ? <Loader2 size={17} className="animate-spin" /> : <Save size={17} />}
+                {savingDraft ? "Saving…" : "Save as incomplete draft"}
+              </button>
             </div>
           </div>
 
-          {ai && (
-            <div className="card animate-fade-up p-5">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="flex items-center gap-2 text-lg font-black">
-                  <Sparkles size={18} className="text-civic" /> AI classification
-                </h2>
-                <PriorityBadge priority={ai.priority} />
-              </div>
-              <p className="mt-3 text-sm font-bold">
-                {ai.category}
-                {ai.subcategory ? ` - ${ai.subcategory}` : ""}
-              </p>
-              <p className="mt-2 text-sm leading-6 text-slate-600">{ai.summary}</p>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
-                <span className="rounded-md bg-slate-50 px-2 py-1.5">
-                  Severity: <strong className="text-ink">{ai.severityScore}/10</strong>
-                </span>
-                <span className="rounded-md bg-slate-50 px-2 py-1.5">
-                  Civic impact: <strong className="text-ink">{ai.civicImpactScore}/100</strong>
-                </span>
-                <span className="rounded-md bg-slate-50 px-2 py-1.5">
-                  Department: <strong className="text-ink">{ai.aiSuggestedDepartment}</strong>
-                </span>
-                <span className="rounded-md bg-slate-50 px-2 py-1.5">
-                  Confidence: <strong className="text-ink">{Math.round(ai.confidence * 100)}%</strong>
-                </span>
-              </div>
-              {ai.risks && (
-                <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                  {Object.entries(ai.risks)
-                    .filter(([, level]) => level !== "Low")
-                    .map(([key, level]) => (
-                      <span key={key} className="rounded-full bg-red-50 px-2 py-1 font-bold text-red-800">
-                        {key}: {level}
-                      </span>
-                    ))}
-                </div>
-              )}
-              {ai.recommendedAction && (
-                <p className="mt-3 text-xs text-slate-500">
-                  Suggested action: {ai.recommendedAction}
-                </p>
-              )}
-              <p className="mt-3 text-xs font-semibold text-slate-500">Source: {ai.source}</p>
-              {ai.confidence < 0.65 && (
-                <label className="mt-3 block">
-                  <span className="mb-1 block text-sm font-bold">Adjust category</span>
-                  <select
-                    className="field"
-                    value={ai.category}
-                    onChange={(event) => setAi({ ...ai, category: event.target.value })}
-                  >
-                    {issueCategories.map((category) => (
-                      <option key={category}>{category}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-          )}
-
-          {duplicate && (
-            <div className="card animate-fade-up border-amber-200 bg-amber-50 p-5">
-              <h2 className="flex items-center gap-2 text-lg font-black text-amber-950">
-                <AlertTriangle size={19} /> Likely duplicate ({duplicate.duplicatePercentage}% match)
+          {/* ── Right sidebar ── */}
+          <aside className="space-y-4">
+            <div className="card p-5">
+              <h2 className="flex items-center gap-2 text-lg font-black">
+                <MapPin size={18} className="text-civic" /> Submission intelligence
               </h2>
-              <p className="mt-2 text-sm leading-6 text-amber-900">
-                A similar issue already exists. Supporting it will raise priority without cluttering
-                the system.
-              </p>
-              <Link
-                to={`/complaints/${duplicate.complaint.complaintId}`}
-                className="mt-3 block rounded-md bg-white p-3 text-sm font-bold"
-              >
-                {duplicate.complaint.aiSummary}
-              </Link>
-              <button
-                type="button"
-                className="btn-primary mt-3 w-full"
-                onClick={supportDuplicate}
-              >
-                <ThumbsUp size={17} />
-                Support existing complaint
-              </button>
+              <div className="mt-4 space-y-2 text-sm">
+                <p>
+                  {isPolygonRegion ? "City" : "Region"}: <strong>{region.name}</strong>
+                </p>
+                <p>
+                  GPS:{" "}
+                  {location
+                    ? `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}${location.fromExif ? " (EXIF)" : location.fromMap ? " (map)" : ` (±${Math.round(location.accuracy || 0)}m)`}`
+                    : "Not captured"}
+                </p>
+                {isPolygonRegion ? (
+                  <>
+                    <p>
+                      {areaTypeLabel}:{" "}
+                      <strong>
+                        {geoIntel?.ward
+                          ? `${geoIntel.ward.number} - ${geoIntel.ward.name}`
+                          : location
+                            ? `Outside mapped ${areaTypeLabel.toLowerCase()}s`
+                            : "Not captured"}
+                      </strong>
+                    </p>
+                    <p>
+                      Zone:{" "}
+                      <strong>{geoIntel?.zone ? `Zone ${geoIntel.zone.number}` : "-"}</strong>
+                    </p>
+                    <p>Locality: {geoIntel?.address?.locality || "-"}</p>
+                    <p>Address: {geoIntel?.address?.formattedAddress || "-"}</p>
+                    {location && !geoIntel?.ward && (
+                      <p className="rounded-md bg-amber-50 p-3 text-amber-900">
+                        This location is outside the mapped {region.name}{" "}
+                        {areaTypeLabel.toLowerCase()} boundaries. It can still be submitted, but no{" "}
+                        {areaTypeLabel.toLowerCase()} will be attached.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p>
+                      Zone: <strong>{selectedZone?.name || "Unmapped / Verify"}</strong>
+                    </p>
+                    {zoneState?.status === "outside" && (
+                      <p className="rounded-md bg-amber-50 p-3 text-amber-900">
+                        Nearest configured zone is {zoneState.nearestZone?.name}, but GPS is
+                        outside its radius.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
-          )}
 
-          <button type="submit" className="btn-primary w-full py-3" disabled={busy}>
-            <CheckCircle2 size={18} />
-            {busy ? "Processing..." : "Submit new complaint"}
-          </button>
-        </aside>
-      </form>
-    </section>
+            {ai && (
+              <div className="card animate-fade-up p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="flex items-center gap-2 text-lg font-black">
+                    <Sparkles size={18} className="text-civic" /> AI classification
+                  </h2>
+                  <PriorityBadge priority={ai.priority} />
+                </div>
+                <p className="mt-3 text-sm font-bold">
+                  {ai.category}
+                  {ai.subcategory ? ` - ${ai.subcategory}` : ""}
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{ai.summary}</p>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                  <span className="rounded-md bg-slate-50 px-2 py-1.5">
+                    Severity: <strong className="text-ink">{ai.severityScore}/10</strong>
+                  </span>
+                  <span className="rounded-md bg-slate-50 px-2 py-1.5">
+                    Civic impact: <strong className="text-ink">{ai.civicImpactScore}/100</strong>
+                  </span>
+                  <span className="rounded-md bg-slate-50 px-2 py-1.5">
+                    Department: <strong className="text-ink">{ai.aiSuggestedDepartment}</strong>
+                  </span>
+                  <span className="rounded-md bg-slate-50 px-2 py-1.5">
+                    Confidence:{" "}
+                    <strong className="text-ink">{Math.round(ai.confidence * 100)}%</strong>
+                  </span>
+                </div>
+                {ai.risks && (
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                    {Object.entries(ai.risks)
+                      .filter(([, level]) => level !== "Low")
+                      .map(([key, level]) => (
+                        <span
+                          key={key}
+                          className="rounded-full bg-red-50 px-2 py-1 font-bold text-red-800"
+                        >
+                          {key}: {level}
+                        </span>
+                      ))}
+                  </div>
+                )}
+                {ai.recommendedAction && (
+                  <p className="mt-3 text-xs text-slate-500">
+                    Suggested action: {ai.recommendedAction}
+                  </p>
+                )}
+                <p className="mt-3 text-xs font-semibold text-slate-500">Source: {ai.source}</p>
+                {ai.confidence < 0.65 && (
+                  <label className="mt-3 block">
+                    <span className="mb-1 block text-sm font-bold">Adjust category</span>
+                    <select
+                      className="field"
+                      value={ai.category}
+                      onChange={(event) => setAi({ ...ai, category: event.target.value })}
+                    >
+                      {issueCategories.map((category) => (
+                        <option key={category}>{category}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+            )}
+
+            {duplicate && (
+              <div className="card animate-fade-up border-amber-200 bg-amber-50 p-5">
+                <h2 className="flex items-center gap-2 text-lg font-black text-amber-950">
+                  <AlertTriangle size={19} /> Likely duplicate ({duplicate.duplicatePercentage}%
+                  match)
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-amber-900">
+                  A similar issue already exists. Supporting it will raise priority without
+                  cluttering the system.
+                </p>
+                <Link
+                  to={`/complaints/${duplicate.complaint.complaintId}`}
+                  className="mt-3 block rounded-md bg-white p-3 text-sm font-bold"
+                >
+                  {duplicate.complaint.aiSummary}
+                </Link>
+                <button
+                  type="button"
+                  className="btn-primary mt-3 w-full"
+                  onClick={supportDuplicate}
+                >
+                  <ThumbsUp size={17} />
+                  Support existing complaint
+                </button>
+              </div>
+            )}
+
+            <button type="submit" className="btn-primary w-full py-3" disabled={busy}>
+              <CheckCircle2 size={18} />
+              {busy ? "Processing..." : "Submit new complaint"}
+            </button>
+          </aside>
+        </form>
+      </section>
+    </>
   );
 }

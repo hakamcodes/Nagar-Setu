@@ -6,6 +6,7 @@ import {
   Loader2,
   LocateFixed,
   MapPin,
+  MapPinned,
   Mic,
   MicOff,
   Sparkles,
@@ -23,14 +24,16 @@ import { useAuth } from "../state/AuthContext.jsx";
 import { useData } from "../state/DataContext.jsx";
 import { useToast } from "../state/ToastContext.jsx";
 import { PriorityBadge } from "../components/ui/Badge.jsx";
+import LocationPickerModal from "../components/map/LocationPickerModal.jsx";
 
-// ─── Voice input hook (same as ReportIssue) ───────────────────────────────────
+// ─── Voice input hook (non-continuous — one clean session per press) ─────────
 
-function useSpeechInput(onTranscript) {
+function useSpeechInput() {
   const recognitionRef = useRef(null);
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(true);
   const [interim, setInterim] = useState("");
+  const [lastFinal, setLastFinal] = useState(null);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -39,37 +42,47 @@ function useSpeechInput(onTranscript) {
       return;
     }
     const recognition = new SpeechRecognition();
-    recognition.continuous = true;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = "hi-IN";
     recognition.maxAlternatives = 1;
 
+    let sessionFinal = "";
+
+    recognition.onstart = () => {
+      sessionFinal = "";
+      setInterim("");
+    };
+
     recognition.onresult = (event) => {
       let interimText = "";
-      let finalText = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
+      for (let i = 0; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalText += transcript + " ";
+          sessionFinal += t + " ";
         } else {
-          interimText += transcript;
+          interimText = t;
         }
       }
-      if (finalText) onTranscript(finalText);
       setInterim(interimText);
     };
 
     recognition.onerror = (event) => {
-      if (event.error !== "no-speech") setListening(false);
+      if (event.error !== "no-speech") {
+        setListening(false);
+        setInterim("");
+      }
     };
 
     recognition.onend = () => {
       setListening(false);
       setInterim("");
+      const clean = sessionFinal.trim();
+      if (clean) setLastFinal(clean);
     };
 
     recognitionRef.current = recognition;
-  }, [onTranscript]);
+  }, []);
 
   const startListening = useCallback(() => {
     if (!recognitionRef.current) return;
@@ -84,11 +97,9 @@ function useSpeechInput(onTranscript) {
   const stopListening = useCallback(() => {
     if (!recognitionRef.current) return;
     recognitionRef.current.stop();
-    setListening(false);
-    setInterim("");
   }, []);
 
-  return { listening, supported, interim, startListening, stopListening };
+  return { listening, supported, interim, lastFinal, startListening, stopListening };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -110,6 +121,7 @@ export default function CompleteDraft() {
   const [ai, setAi] = useState(null);
   const [duplicate, setDuplicate] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [showMapPicker, setShowMapPicker] = useState(false);
 
   const region = useMemo(
     () => getRegion(draft?.regionId || user?.regionPreference),
@@ -155,12 +167,17 @@ export default function CompleteDraft() {
     }
   }, [draftId, navigate, showToast, user?.uid]);
 
-  const handleSpeechTranscript = useCallback((text) => {
-    setDescription((prev) => (prev ? prev.trimEnd() + " " + text.trim() : text.trim()));
-  }, []);
+  // Voice input — append each clean session to description
+  const { listening, supported: speechSupported, interim, lastFinal, startListening, stopListening } =
+    useSpeechInput();
 
-  const { listening, supported: speechSupported, interim, startListening, stopListening } =
-    useSpeechInput(handleSpeechTranscript);
+  const lastFinalRef = useRef(null);
+  useEffect(() => {
+    if (lastFinal && lastFinal !== lastFinalRef.current) {
+      lastFinalRef.current = lastFinal;
+      setDescription((prev) => (prev ? prev.trimEnd() + " " + lastFinal : lastFinal));
+    }
+  }, [lastFinal]);
 
   const selectedZone = useMemo(
     () => zoneState?.zone || regionZones.find((z) => z.zoneId === manualZoneId) || null,
@@ -197,10 +214,26 @@ export default function CompleteDraft() {
       const intel = await resolveLocationIntelligence(gps, region);
       applyLocationIntelligence(intel);
     } catch (error) {
-      showToast(error.message || "Location permission denied.", "error");
+      showToast(
+        (error.message || "Location permission denied.") + " — You can also pick on the map.",
+        "error",
+      );
       setZoneState({ zone: null, status: "manual" });
     } finally {
       setLocating(false);
+    }
+  }
+
+  async function handleMapPickConfirm(coords) {
+    setShowMapPicker(false);
+    showToast("Resolving map location…");
+    try {
+      const loc = { ...coords, accuracy: null, fromMap: true };
+      setLocation(loc);
+      const intel = await resolveLocationIntelligence(loc, region);
+      applyLocationIntelligence(intel);
+    } catch {
+      // Non-fatal — location coords still set
     }
   }
 
@@ -344,21 +377,30 @@ export default function CompleteDraft() {
   }
 
   return (
-    <section className="section">
-      <div className="mb-6">
-        <Link
-          to="/my-complaints"
-          className="mb-4 inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-civic transition"
-        >
-          <ArrowLeft size={16} /> Back to My Complaints
-        </Link>
-        <p className="eyebrow">Incomplete complaint</p>
-        <h1 className="page-title">Complete your draft</h1>
-        <p className="mt-2 text-sm text-slate-500">
-          Saved {new Date(draft.createdAt).toLocaleString("en-IN")} · Add a description and location
-          to submit.
-        </p>
-      </div>
+    <>
+      {showMapPicker && (
+        <LocationPickerModal
+          initialCenter={location || { latitude: region.defaultCenterLat, longitude: region.defaultCenterLng }}
+          onConfirm={handleMapPickConfirm}
+          onClose={() => setShowMapPicker(false)}
+        />
+      )}
+
+      <section className="section">
+        <div className="mb-6">
+          <Link
+            to="/my-complaints"
+            className="mb-4 inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-civic transition"
+          >
+            <ArrowLeft size={16} /> Back to My Complaints
+          </Link>
+          <p className="eyebrow">Incomplete complaint</p>
+          <h1 className="page-title">Complete your draft</h1>
+          <p className="mt-2 text-sm text-slate-500">
+            Saved {new Date(draft.createdAt).toLocaleString("en-IN")} · Add a description and
+            location to submit.
+          </p>
+        </div>
 
       <form className="grid gap-6 lg:grid-cols-[1fr_0.78fr]" onSubmit={handleSubmit}>
         <div className="card space-y-5 p-5">
@@ -455,25 +497,37 @@ export default function CompleteDraft() {
               <p className="mb-2 rounded-md bg-teal-50 px-3 py-2 text-xs text-teal-800">
                 📍{" "}
                 {location.fromExif
-                  ? "Location loaded from photo metadata."
-                  : `GPS captured (±${Math.round(location.accuracy || 0)}m).`}{" "}
-                Tap below to override.
+                  ? "From photo metadata"
+                  : location.fromMap
+                    ? "Picked on map"
+                    : `GPS (±${Math.round(location.accuracy || 0)}m)`}{" "}
+                — {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}. Tap below to
+                override.
               </p>
             ) : (
               <p className="mb-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                No location saved in this draft. Please capture your current GPS or choose a zone on
-                the map.
+                No location saved. Capture GPS or pick on the map below.
               </p>
             )}
-            <button
-              type="button"
-              className="btn-secondary w-full"
-              onClick={captureLocation}
-              disabled={locating}
-            >
-              <LocateFixed size={17} />
-              {locating ? "Locating..." : location ? "Re-capture current GPS" : "Capture GPS location"}
-            </button>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={captureLocation}
+                disabled={locating}
+              >
+                <LocateFixed size={17} />
+                {locating ? "Locating…" : location ? "Re-capture GPS" : "Capture GPS"}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowMapPicker(true)}
+              >
+                <MapPinned size={17} />
+                Pick on map
+              </button>
+            </div>
           </div>
 
           {!isPolygonRegion && (
@@ -617,5 +671,6 @@ export default function CompleteDraft() {
         </aside>
       </form>
     </section>
+    </>
   );
 }
