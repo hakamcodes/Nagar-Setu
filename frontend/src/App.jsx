@@ -11,6 +11,7 @@ import MyComplaints from "./pages/MyComplaints.jsx";
 import SupportedIssues from "./pages/SupportedIssues.jsx";
 import Settings from "./pages/Settings.jsx";
 import NotFound from "./pages/NotFound.jsx";
+import CompleteDraft from "./pages/CompleteDraft.jsx";
 
 const MapPage = lazy(() => import("./pages/MapPage.jsx"));
 const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard.jsx"));
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="/complaints/:complaintId" element={<ComplaintDetail />} />
           <Route path="/map" element={<MapPage />} />
           <Route path="/my-complaints" element={<ProtectedRoute><MyComplaints /></ProtectedRoute>} />
+          <Route path="/complete-draft/:draftId" element={<ProtectedRoute><CompleteDraft /></ProtectedRoute>} />
           <Route path="/supported" element={<ProtectedRoute><SupportedIssues /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute roles={OFFICER_ROLES}><AdminDashboard /></ProtectedRoute>} />

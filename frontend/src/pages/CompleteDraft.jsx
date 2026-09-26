@@ -1,36 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  Camera,
+  ArrowLeft,
   CheckCircle2,
   Loader2,
   LocateFixed,
   MapPin,
   Mic,
   MicOff,
-  Save,
   Sparkles,
   ThumbsUp,
+  Trash2,
 } from "lucide-react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { getAreaLabel, getRegion, getZonesForRegion, issueCategories } from "../config/regions.js";
 import { classifyComplaint } from "../services/aiService.js";
 import { findLikelyDuplicate } from "../services/duplicateService.js";
-import { compressImageToBase64, extractExifGps } from "../utils/image.js";
+import { deleteDraft, listDrafts } from "../services/complaintRepository.js";
 import { getBrowserLocation } from "../utils/geo.js";
 import { resolveLocationIntelligence } from "../services/geoService.js";
 import { useAuth } from "../state/AuthContext.jsx";
 import { useData } from "../state/DataContext.jsx";
 import { useToast } from "../state/ToastContext.jsx";
 import { PriorityBadge } from "../components/ui/Badge.jsx";
-import { saveDraft } from "../services/complaintRepository.js";
 
-// ─── Voice input hook ─────────────────────────────────────────────────────────
-// Uses the Web Speech API with continuous listening so the user can speak
-// naturally in Hindi, English, or a mix (Hinglish). Falls back gracefully when
-// the browser doesn't support it.
-
-const SPEECH_LANGS = ["hi-IN", "en-IN"];
+// ─── Voice input hook (same as ReportIssue) ───────────────────────────────────
 
 function useSpeechInput(onTranscript) {
   const recognitionRef = useRef(null);
@@ -47,9 +41,7 @@ function useSpeechInput(onTranscript) {
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
-    // Use hi-IN as the primary language; the API will still handle English
-    // words (common in Hinglish) very well at this locale.
-    recognition.lang = SPEECH_LANGS[0];
+    recognition.lang = "hi-IN";
     recognition.maxAlternatives = 1;
 
     recognition.onresult = (event) => {
@@ -68,9 +60,7 @@ function useSpeechInput(onTranscript) {
     };
 
     recognition.onerror = (event) => {
-      if (event.error !== "no-speech") {
-        setListening(false);
-      }
+      if (event.error !== "no-speech") setListening(false);
     };
 
     recognition.onend = () => {
@@ -87,7 +77,7 @@ function useSpeechInput(onTranscript) {
       recognitionRef.current.start();
       setListening(true);
     } catch {
-      // Already started — ignore
+      // Already started
     }
   }, []);
 
@@ -103,22 +93,15 @@ function useSpeechInput(onTranscript) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function ReportIssue() {
+export default function CompleteDraft() {
+  const { draftId } = useParams();
   const { user } = useAuth();
   const { complaints, submitComplaint, support } = useData();
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const routerLocation = useLocation();
-  const cameraInputRef = useRef(null);
-  const region = getRegion(user?.regionPreference);
-  const isPolygonRegion = region.geoMode === "polygon";
-  const areaTypeLabel = getAreaLabel(region.regionId);
-  const regionZones = getZonesForRegion(region.regionId);
 
+  const [draft, setDraft] = useState(null);
   const [description, setDescription] = useState("");
-  const [image, setImage] = useState(null);
-  const [imageFile, setImageFile] = useState(null);
-  const [imageMeta, setImageMeta] = useState(null);
   const [location, setLocation] = useState(null);
   const [locating, setLocating] = useState(false);
   const [zoneState, setZoneState] = useState(null);
@@ -127,9 +110,51 @@ export default function ReportIssue() {
   const [ai, setAi] = useState(null);
   const [duplicate, setDuplicate] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [savingDraft, setSavingDraft] = useState(false);
 
-  // Append recognised speech to description
+  const region = useMemo(
+    () => getRegion(draft?.regionId || user?.regionPreference),
+    [draft?.regionId, user?.regionPreference],
+  );
+  const isPolygonRegion = region.geoMode === "polygon";
+  const areaTypeLabel = getAreaLabel(region.regionId);
+  const regionZones = getZonesForRegion(region.regionId);
+
+  // Load draft from localStorage
+  useEffect(() => {
+    if (!user?.uid) return;
+    const drafts = listDrafts(user.uid);
+    const found = drafts.find((d) => d.draftId === draftId);
+    if (!found) {
+      showToast("Draft not found or already submitted.", "error");
+      navigate("/my-complaints");
+      return;
+    }
+    setDraft(found);
+    setDescription(found.description || "");
+
+    // Restore saved location if present
+    if (found.latitude && found.longitude) {
+      setLocation({
+        latitude: found.latitude,
+        longitude: found.longitude,
+        accuracy: found.accuracy || null,
+        fromExif: found.locationFromExif || false,
+      });
+      if (found.zoneId) setManualZoneId(found.zoneId);
+      if (found.ward || found.zone || found.locality) {
+        setGeoIntel({
+          ward: found.ward || null,
+          zone: found.zone || null,
+          address: {
+            locality: found.locality || "",
+            road: found.road || "",
+            formattedAddress: found.formattedAddress || "",
+          },
+        });
+      }
+    }
+  }, [draftId, navigate, showToast, user?.uid]);
+
   const handleSpeechTranscript = useCallback((text) => {
     setDescription((prev) => (prev ? prev.trimEnd() + " " + text.trim() : text.trim()));
   }, []);
@@ -138,25 +163,11 @@ export default function ReportIssue() {
     useSpeechInput(handleSpeechTranscript);
 
   const selectedZone = useMemo(
-    () => zoneState?.zone || regionZones.find((zone) => zone.zoneId === manualZoneId) || null,
+    () => zoneState?.zone || regionZones.find((z) => z.zoneId === manualZoneId) || null,
     [manualZoneId, regionZones, zoneState],
   );
   const areaLabel = isPolygonRegion ? geoIntel?.ward?.name : selectedZone?.name;
   const canSubmitLocation = isPolygonRegion ? Boolean(location) : Boolean(selectedZone);
-
-  // Resolve location from EXIF then optionally from browser GPS
-  async function resolveLocationFromExifOrGps(file, gpsFromExif) {
-    if (gpsFromExif) {
-      setLocation(gpsFromExif);
-      showToast("📍 Location auto-detected from photo metadata.");
-      try {
-        const intel = await resolveLocationIntelligence(gpsFromExif, region);
-        applyLocationIntelligence(intel);
-      } catch {
-        // Non-fatal — user can capture manually
-      }
-    }
-  }
 
   function applyLocationIntelligence(intel) {
     if (intel.geoMode === "circle") {
@@ -173,29 +184,8 @@ export default function ReportIssue() {
       showToast(
         intel.ward
           ? `Detected ${areaTypeLabel} ${intel.ward.number} - ${intel.ward.name}.`
-          : `Location captured, but it falls outside mapped ${region.name} ${areaTypeLabel.toLowerCase()}s.`,
+          : `Location captured, but outside mapped ${region.name} ${areaTypeLabel.toLowerCase()}s.`,
       );
-    }
-  }
-
-  async function handleImage(file) {
-    if (!file) return;
-    try {
-      const compressed = await compressImageToBase64(file);
-      setImage(compressed.imageData);
-      setImageMeta(compressed);
-      setImageFile(file);
-      showToast("Photo captured. Checking for embedded location…");
-
-      // Try EXIF GPS first — don't require it
-      const gpsFromExif = await extractExifGps(file);
-      if (gpsFromExif) {
-        await resolveLocationFromExifOrGps(file, gpsFromExif);
-      } else {
-        showToast("No GPS in photo. Use 'Capture GPS location' to set it.");
-      }
-    } catch (error) {
-      showToast(error.message, "error");
     }
   }
 
@@ -223,13 +213,12 @@ export default function ReportIssue() {
     try {
       const result = await classifyComplaint({
         description,
-        imageData: image,
+        imageData: draft?.imageData,
         zoneName: areaLabel,
         regionName: region.name,
         regionId: region.regionId,
       });
       setAi(result);
-
       const candidate = {
         regionId: region.regionId,
         zoneId: selectedZone?.zoneId,
@@ -238,7 +227,7 @@ export default function ReportIssue() {
         longitude: location?.longitude || selectedZone?.longitude,
         description,
         aiCategory: result.category,
-        imageHash: imageMeta?.imageHash || "",
+        imageHash: draft?.imageHash || "",
         createdAt: new Date().toISOString(),
       };
       setDuplicate(findLikelyDuplicate(candidate, complaints));
@@ -248,54 +237,17 @@ export default function ReportIssue() {
     }
   }
 
-  async function handleSaveDraft() {
-    if (!image) {
-      showToast("Take a photo first to save a draft.", "error");
-      return;
-    }
-    setSavingDraft(true);
-    try {
-      saveDraft({
-        userId: user.uid,
-        regionId: region.regionId,
-        imageData: image,
-        imageMimeType: imageMeta?.imageMimeType || "image/jpeg",
-        imageSize: imageMeta?.imageSize || 0,
-        imageHash: imageMeta?.imageHash || "",
-        description: description.trim(),
-        latitude: location?.latitude || null,
-        longitude: location?.longitude || null,
-        accuracy: location?.accuracy || null,
-        locationFromExif: location?.fromExif || false,
-        ward: geoIntel?.ward || null,
-        zone: geoIntel?.zone || null,
-        zoneId: selectedZone?.zoneId || "",
-        zoneName: isPolygonRegion
-          ? geoIntel?.zone?.number
-            ? `Zone ${geoIntel.zone.number}`
-            : ""
-          : selectedZone?.name || "",
-        locality: geoIntel?.address?.locality || "",
-        road: geoIntel?.address?.road || "",
-        formattedAddress: geoIntel?.address?.formattedAddress || "",
-        city: isPolygonRegion ? region.name : "",
-        state: region.state,
-        country: region.country,
-        municipality: region.municipality || "",
-      });
-      showToast("Draft saved! You can complete it later from My Complaints.");
-      navigate("/my-complaints");
-    } catch (error) {
-      showToast(error.message || "Could not save draft.", "error");
-    } finally {
-      setSavingDraft(false);
-    }
+  async function handleDiscard() {
+    if (!window.confirm("Delete this draft? This cannot be undone.")) return;
+    deleteDraft(draftId);
+    showToast("Draft discarded.");
+    navigate("/my-complaints");
   }
 
-  async function createNewComplaint(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
-    if (!image) {
-      showToast("Take a live photo so the authority has evidence.", "error");
+    if (!description.trim()) {
+      showToast("Please describe the issue before submitting.", "error");
       return;
     }
     if (!canSubmitLocation) {
@@ -330,14 +282,14 @@ export default function ReportIssue() {
           ? geoIntel?.zone?.number
             ? `Zone ${geoIntel.zone.number}`
             : ""
-          : selectedZone?.name,
+          : selectedZone?.name || "",
         latitude: location?.latitude || selectedZone?.latitude,
         longitude: location?.longitude || selectedZone?.longitude,
         accuracy: location?.accuracy || null,
-        imageData: image,
-        imageMimeType: imageMeta?.imageMimeType || "image/jpeg",
-        imageSize: imageMeta?.imageSize || 0,
-        imageHash: imageMeta?.imageHash || "",
+        imageData: draft?.imageData,
+        imageMimeType: draft?.imageMimeType || "image/jpeg",
+        imageSize: draft?.imageSize || 0,
+        imageHash: draft?.imageHash || "",
         description: description.trim(),
         aiCategory: classification.category,
         aiSubcategory: classification.subcategory,
@@ -356,15 +308,13 @@ export default function ReportIssue() {
         isDuplicate: false,
         anonymous: false,
       });
-      showToast("Complaint submitted.");
+
+      // Remove draft once submitted
+      deleteDraft(draftId);
+      showToast("Complaint submitted successfully!");
       navigate(`/complaints/${complaint.complaintId}`);
     } catch (error) {
-      if (error.code === "permission-denied") {
-        showToast("Please log in to submit a complaint.", "error");
-        navigate("/signin", { state: { from: routerLocation } });
-      } else {
-        showToast(error.message || "Could not submit complaint.", "error");
-      }
+      showToast(error.message || "Could not submit complaint.", "error");
     } finally {
       setBusy(false);
     }
@@ -381,72 +331,51 @@ export default function ReportIssue() {
       );
       navigate(`/complaints/${duplicate.complaint.complaintId}`);
     } catch (error) {
-      if (error.code === "permission-denied") {
-        showToast("Please log in to support this issue.", "error");
-        navigate("/signin", { state: { from: routerLocation } });
-      } else {
-        showToast(error.message || "Could not support this issue.", "error");
-      }
+      showToast(error.message || "Could not support this issue.", "error");
     }
+  }
+
+  if (!draft) {
+    return (
+      <section className="section grid place-items-center py-20">
+        <Loader2 size={32} className="animate-spin text-civic" />
+      </section>
+    );
   }
 
   return (
     <section className="section">
       <div className="mb-6">
-        <p className="eyebrow">Report in under one minute</p>
-        <h1 className="page-title">Report a civic issue</h1>
+        <Link
+          to="/my-complaints"
+          className="mb-4 inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-civic transition"
+        >
+          <ArrowLeft size={16} /> Back to My Complaints
+        </Link>
+        <p className="eyebrow">Incomplete complaint</p>
+        <h1 className="page-title">Complete your draft</h1>
+        <p className="mt-2 text-sm text-slate-500">
+          Saved {new Date(draft.createdAt).toLocaleString("en-IN")} · Add a description and location
+          to submit.
+        </p>
       </div>
 
-      <form className="grid gap-6 lg:grid-cols-[1fr_0.78fr]" onSubmit={createNewComplaint}>
+      <form className="grid gap-6 lg:grid-cols-[1fr_0.78fr]" onSubmit={handleSubmit}>
         <div className="card space-y-5 p-5">
 
-          {/* ── Photo capture (live camera only) ── */}
+          {/* Draft photo (read-only preview) */}
           <div>
-            <span className="mb-2 block text-sm font-bold">Issue photo</span>
-            <div className="grid min-h-64 place-items-center rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 p-4 transition hover:border-civic/40 hover:bg-teal-50/40">
-              {image ? (
-                <img
-                  src={image}
-                  alt="Captured complaint evidence"
-                  className="max-h-80 rounded-lg object-contain shadow-card"
-                />
-              ) : (
-                <div className="text-center text-slate-500">
-                  <span className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-full bg-teal-50 text-civic ring-4 ring-teal-100">
-                    <Camera size={20} />
-                  </span>
-                  <p className="text-sm">
-                    Click a <strong>live photo</strong> of the issue.
-                    <br />
-                    <span className="text-xs text-slate-400">
-                      Live photos ensure authenticity. Gallery upload is disabled.
-                    </span>
-                  </p>
-                </div>
-              )}
-              <div className="mt-4 w-full">
-                <button
-                  type="button"
-                  className="btn-primary w-full"
-                  onClick={() => cameraInputRef.current?.click()}
-                >
-                  <Camera size={17} />
-                  {image ? "Retake photo" : "Take live photo"}
-                </button>
-              </div>
-              {/* Live camera only — no gallery */}
-              <input
-                ref={cameraInputRef}
-                className="hidden"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={(event) => handleImage(event.target.files?.[0])}
+            <span className="mb-2 block text-sm font-bold">Captured photo</span>
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+              <img
+                src={draft.imageData}
+                alt="Draft complaint photo"
+                className="max-h-72 w-full object-contain"
               />
             </div>
           </div>
 
-          {/* ── Voice / text description ── */}
+          {/* Voice / text description */}
           <div>
             <span className="mb-2 block text-sm font-bold">
               Describe the issue
@@ -455,7 +384,6 @@ export default function ReportIssue() {
               </span>
             </span>
 
-            {/* Voice button */}
             {speechSupported ? (
               <div className="mb-3">
                 <button
@@ -479,8 +407,6 @@ export default function ReportIssue() {
                     </>
                   )}
                 </button>
-
-                {/* Live interim transcript */}
                 {listening && interim && (
                   <div className="mt-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800 italic">
                     <span className="mr-1 font-semibold not-italic text-teal-600">Hearing:</span>
@@ -488,27 +414,25 @@ export default function ReportIssue() {
                     <span className="ml-1 animate-pulse">…</span>
                   </div>
                 )}
-
                 {listening && (
-                  <p className="mt-1 text-xs text-slate-500 text-center">
+                  <p className="mt-1 text-center text-xs text-slate-500">
                     🎙️ Listening… speak clearly in Hindi or English
                   </p>
                 )}
               </div>
             ) : (
               <p className="mb-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                Voice input is not supported in this browser. Please use Chrome or Safari.
+                Voice input is not supported in this browser. Please type below.
               </p>
             )}
 
-            {/* Text area — editable, pre-filled from voice */}
             <textarea
               className="field min-h-28"
               required
               maxLength={420}
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              placeholder="Example: Streetlight near hostel walkway has been off for three nights."
+              placeholder="Describe the issue you photographed…"
             />
             <div className="mt-1 flex items-center justify-between">
               <span className="text-xs text-slate-500">{description.length}/420 characters</span>
@@ -524,29 +448,33 @@ export default function ReportIssue() {
             </div>
           </div>
 
-          {/* ── Location controls ── */}
-          <div className="grid gap-3 sm:grid-cols-2">
+          {/* Location */}
+          <div>
+            <span className="mb-2 block text-sm font-bold">Location</span>
+            {location ? (
+              <p className="mb-2 rounded-md bg-teal-50 px-3 py-2 text-xs text-teal-800">
+                📍{" "}
+                {location.fromExif
+                  ? "Location loaded from photo metadata."
+                  : `GPS captured (±${Math.round(location.accuracy || 0)}m).`}{" "}
+                Tap below to override.
+              </p>
+            ) : (
+              <p className="mb-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                No location saved in this draft. Please capture your current GPS or choose a zone on
+                the map.
+              </p>
+            )}
             <button
               type="button"
-              className="btn-secondary"
+              className="btn-secondary w-full"
               onClick={captureLocation}
               disabled={locating}
             >
               <LocateFixed size={17} />
-              {locating ? "Locating..." : location ? "Re-capture GPS" : "Capture GPS location"}
-            </button>
-            <button type="button" className="btn-secondary" onClick={analyze} disabled={busy}>
-              <Sparkles size={17} />
-              Run AI triage
+              {locating ? "Locating..." : location ? "Re-capture current GPS" : "Capture GPS location"}
             </button>
           </div>
-
-          {location?.fromExif && (
-            <p className="rounded-md bg-teal-50 px-3 py-2 text-xs text-teal-800">
-              📍 Location auto-read from photo EXIF metadata. Use "Re-capture GPS" to override with
-              your current position.
-            </p>
-          )}
 
           {!isPolygonRegion && (
             <label className="block">
@@ -566,32 +494,27 @@ export default function ReportIssue() {
             </label>
           )}
 
-          {/* ── Save as Draft (quick-capture shortcut) ── */}
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-700">
-              🚦 In a hurry? Save photo as draft
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Just take a photo and tap below — you can add the description and submit later from{" "}
-              <strong>My Complaints</strong>.
-            </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button type="button" className="btn-secondary" onClick={analyze} disabled={busy}>
+              <Sparkles size={17} />
+              Run AI triage
+            </button>
             <button
               type="button"
-              className="btn-secondary mt-3 w-full"
-              onClick={handleSaveDraft}
-              disabled={!image || savingDraft}
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-100"
+              onClick={handleDiscard}
             >
-              {savingDraft ? <Loader2 size={17} className="animate-spin" /> : <Save size={17} />}
-              {savingDraft ? "Saving…" : "Save as incomplete draft"}
+              <Trash2 size={17} />
+              Discard draft
             </button>
           </div>
         </div>
 
-        {/* ── Right sidebar ── */}
+        {/* Right sidebar */}
         <aside className="space-y-4">
           <div className="card p-5">
             <h2 className="flex items-center gap-2 text-lg font-black">
-              <MapPin size={18} className="text-civic" /> Submission intelligence
+              <MapPin size={18} className="text-civic" /> Location details
             </h2>
             <div className="mt-4 space-y-2 text-sm">
               <p>
@@ -600,7 +523,7 @@ export default function ReportIssue() {
               <p>
                 GPS:{" "}
                 {location
-                  ? `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}${location.fromExif ? " (from photo)" : ` (${Math.round(location.accuracy || 0)}m)`}`
+                  ? `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}${location.fromExif ? " (from photo EXIF)" : ""}`
                   : "Not captured"}
               </p>
               {isPolygonRegion ? (
@@ -615,32 +538,11 @@ export default function ReportIssue() {
                           : "Not captured"}
                     </strong>
                   </p>
-                  <p>
-                    Zone:{" "}
-                    <strong>{geoIntel?.zone ? `Zone ${geoIntel.zone.number}` : "-"}</strong>
-                  </p>
+                  <p>Zone: <strong>{geoIntel?.zone ? `Zone ${geoIntel.zone.number}` : "-"}</strong></p>
                   <p>Locality: {geoIntel?.address?.locality || "-"}</p>
-                  <p>Address: {geoIntel?.address?.formattedAddress || "-"}</p>
-                  {location && !geoIntel?.ward && (
-                    <p className="rounded-md bg-amber-50 p-3 text-amber-900">
-                      This location is outside the mapped {region.name}{" "}
-                      {areaTypeLabel.toLowerCase()} boundaries. It can still be submitted, but no{" "}
-                      {areaTypeLabel.toLowerCase()} will be attached.
-                    </p>
-                  )}
                 </>
               ) : (
-                <>
-                  <p>
-                    Zone: <strong>{selectedZone?.name || "Unmapped / Verify"}</strong>
-                  </p>
-                  {zoneState?.status === "outside" && (
-                    <p className="rounded-md bg-amber-50 p-3 text-amber-900">
-                      Nearest configured zone is {zoneState.nearestZone?.name}, but GPS is outside
-                      its radius.
-                    </p>
-                  )}
-                </>
+                <p>Zone: <strong>{selectedZone?.name || "Unmapped / Verify"}</strong></p>
               )}
             </div>
           </div>
@@ -663,32 +565,9 @@ export default function ReportIssue() {
                   Severity: <strong className="text-ink">{ai.severityScore}/10</strong>
                 </span>
                 <span className="rounded-md bg-slate-50 px-2 py-1.5">
-                  Civic impact: <strong className="text-ink">{ai.civicImpactScore}/100</strong>
-                </span>
-                <span className="rounded-md bg-slate-50 px-2 py-1.5">
-                  Department: <strong className="text-ink">{ai.aiSuggestedDepartment}</strong>
-                </span>
-                <span className="rounded-md bg-slate-50 px-2 py-1.5">
                   Confidence: <strong className="text-ink">{Math.round(ai.confidence * 100)}%</strong>
                 </span>
               </div>
-              {ai.risks && (
-                <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                  {Object.entries(ai.risks)
-                    .filter(([, level]) => level !== "Low")
-                    .map(([key, level]) => (
-                      <span key={key} className="rounded-full bg-red-50 px-2 py-1 font-bold text-red-800">
-                        {key}: {level}
-                      </span>
-                    ))}
-                </div>
-              )}
-              {ai.recommendedAction && (
-                <p className="mt-3 text-xs text-slate-500">
-                  Suggested action: {ai.recommendedAction}
-                </p>
-              )}
-              <p className="mt-3 text-xs font-semibold text-slate-500">Source: {ai.source}</p>
               {ai.confidence < 0.65 && (
                 <label className="mt-3 block">
                   <span className="mb-1 block text-sm font-bold">Adjust category</span>
@@ -712,8 +591,7 @@ export default function ReportIssue() {
                 <AlertTriangle size={19} /> Likely duplicate ({duplicate.duplicatePercentage}% match)
               </h2>
               <p className="mt-2 text-sm leading-6 text-amber-900">
-                A similar issue already exists. Supporting it will raise priority without cluttering
-                the system.
+                A similar issue already exists. Supporting it will raise priority.
               </p>
               <Link
                 to={`/complaints/${duplicate.complaint.complaintId}`}
@@ -734,7 +612,7 @@ export default function ReportIssue() {
 
           <button type="submit" className="btn-primary w-full py-3" disabled={busy}>
             <CheckCircle2 size={18} />
-            {busy ? "Processing..." : "Submit new complaint"}
+            {busy ? "Processing..." : "Submit complaint"}
           </button>
         </aside>
       </form>

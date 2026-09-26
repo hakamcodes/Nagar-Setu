@@ -185,6 +185,46 @@ export async function supportComplaint(complaintId, userId) {
   return { alreadySupported: false };
 }
 
+// ─── Draft complaints (quick-capture, incomplete submissions) ────────────────
+
+export function saveDraft(draft) {
+  const store = readStore();
+  const now = new Date().toISOString();
+  const existing = store.drafts?.find((d) => d.draftId === draft.draftId);
+  let drafts;
+  if (existing) {
+    drafts = (store.drafts || []).map((d) =>
+      d.draftId === draft.draftId ? { ...d, ...draft, updatedAt: now } : d,
+    );
+  } else {
+    const newDraft = {
+      draftId: uid("draft"),
+      createdAt: now,
+      updatedAt: now,
+      ...draft,
+    };
+    drafts = [newDraft, ...(store.drafts || [])];
+    writeStore({ ...store, drafts });
+    return newDraft;
+  }
+  writeStore({ ...store, drafts });
+  return drafts.find((d) => d.draftId === draft.draftId);
+}
+
+export function listDrafts(userId) {
+  const store = readStore();
+  return (store.drafts || [])
+    .filter((d) => d.userId === userId)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+export function deleteDraft(draftId) {
+  const store = readStore();
+  writeStore({ ...store, drafts: (store.drafts || []).filter((d) => d.draftId !== draftId) });
+}
+
+// ─── Admin notes ─────────────────────────────────────────────────────────────
+
 export async function addAdminNote(complaintId, adminId, note) {
   const now = new Date().toISOString();
 

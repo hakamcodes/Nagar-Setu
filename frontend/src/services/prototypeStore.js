@@ -79,6 +79,7 @@ function initialState() {
     auditLog: [],
     officers: demoOfficers,
     notifications: [],
+    drafts: [],
   };
 }
 
