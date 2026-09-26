@@ -49,6 +49,11 @@ async function buildUser({ uid, email, name, photoURL }) {
     role,
     zoneNumber,
     regionPreference: defaultRegionId,
+    // Ward-personalisation fields — null until the user sets their home location.
+    // { number, name } | null
+    homeWard: null,
+    homeLat: null,
+    homeLng: null,
     createdAt: new Date().toISOString(),
   };
 }
@@ -75,9 +80,17 @@ export function AuthProvider({ children }) {
         name: firebaseUser.displayName,
         photoURL: firebaseUser.photoURL,
       }).then((normalized) => {
-        setUser(normalized);
-        upsertUser(normalized);
-        localStorage.setItem("nagar-setu-current-user", JSON.stringify(normalized));
+        // Preserve ward/location profile saved from a prior session for this UID
+        // so the user's home ward isn't wiped on every Firebase token refresh.
+        const prior = (() => {
+          try { return JSON.parse(localStorage.getItem("nagar-setu-current-user") || "null"); } catch { return null; }
+        })();
+        const withProfile = (prior?.uid === normalized.uid)
+          ? { ...normalized, homeWard: prior.homeWard ?? null, homeLat: prior.homeLat ?? null, homeLng: prior.homeLng ?? null }
+          : normalized;
+        setUser(withProfile);
+        upsertUser(withProfile);
+        localStorage.setItem("nagar-setu-current-user", JSON.stringify(withProfile));
         setLoading(false);
       });
     });
@@ -162,6 +175,17 @@ export function AuthProvider({ children }) {
     });
   }, []);
 
+  // ward is { number, name } | null; lat/lng are numbers | null
+  const updateHomeLocation = useCallback((ward, lat, lng) => {
+    setUser((current) => {
+      if (!current) return current;
+      const nextUser = { ...current, homeWard: ward ?? null, homeLat: lat ?? null, homeLng: lng ?? null };
+      upsertUser(nextUser);
+      localStorage.setItem("nagar-setu-current-user", JSON.stringify(nextUser));
+      return nextUser;
+    });
+  }, []);
+
   const value = useMemo(
     () => ({
       user,
@@ -174,8 +198,9 @@ export function AuthProvider({ children }) {
       signUpEmail,
       logout,
       updateRegionPreference,
+      updateHomeLocation,
     }),
-    [loading, logout, signInDemo, signInEmail, signInWithGoogle, signUpEmail, updateRegionPreference, user],
+    [loading, logout, signInDemo, signInEmail, signInWithGoogle, signUpEmail, updateRegionPreference, updateHomeLocation, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

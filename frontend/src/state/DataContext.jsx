@@ -5,6 +5,7 @@ import { getSeniorOfficerForZone, listOfficers, upsertOfficer } from "../service
 import { deleteNotification, listNotificationsFor, markNotificationRead, notify } from "../services/notificationService.js";
 import { computeEscalationBumps } from "../services/escalationService.js";
 import { regions, zones } from "../config/regions.js";
+import { readStore } from "../services/prototypeStore.js";
 import { useAuth } from "./AuthContext.jsx";
 
 const DataContext = createContext(null);
@@ -127,6 +128,36 @@ export function DataProvider({ children }) {
 
   const submitComplaint = useCallback(async (payload) => {
     const complaint = await createComplaint(payload);
+
+    // Ward notifications: find all users whose homeWard matches this complaint's ward
+    // and send them an in-app notification (prototype: reads from localStorage store;
+    // in a Firebase deployment this would be a Cloud Function / Firestore query).
+    if (complaint.ward?.number) {
+      try {
+        const store = readStore();
+        const wardUsers = (store.users || []).filter(
+          (u) => u.homeWard?.number === complaint.ward.number
+            && u.email
+            && u.uid !== payload.userId,   // don't notify the submitter
+        );
+        if (wardUsers.length) {
+          await Promise.all(
+            wardUsers.map((u) =>
+              notify(
+                u.email,
+                "ward-complaint",
+                complaint.complaintId,
+                `New issue in your ward (Ward ${complaint.ward.number} – ${complaint.ward.name}): ${complaint.aiCategory || "Issue reported"}.`,
+              ),
+            ),
+          );
+        }
+      } catch (error) {
+        // Non-fatal — notification failure should never block complaint submission
+        console.warn("Ward notification failed:", error);
+      }
+    }
+
     await refresh();
     return complaint;
   }, [refresh]);
