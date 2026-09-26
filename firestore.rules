@@ -1,0 +1,95 @@
+rules_version = '2';
+
+// Nagar Setu - Firestore security rules.
+//
+// Mirrors the client-side role logic in frontend/src/services/officerService.js:
+// super-admin (env-listed emails) > senior-officer (owns one zone) >
+// junior-officer (owns only complaints assigned to them) > citizen (signed-in,
+// read/report only). There are no Firebase custom claims in this app, so
+// "officers" documents (keyed by lowercase email) are the only server-side
+// source of truth for senior/junior role and zone.
+//
+// IMPORTANT: SUPER_ADMIN_EMAILS below must be kept in sync by hand with
+// VITE_ADMIN_EMAILS in frontend/.env (Vercel env var). Firestore rules
+// cannot read a Vite env var - if you change one, change the other.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+
+    function email() {
+      return request.auth.token.email.lower();
+    }
+
+    // Keep literally identical to VITE_ADMIN_EMAILS (comma list, lowercased).
+    function isSuperAdmin() {
+      return signedIn() && email() in ['admin@example.com'];
+    }
+
+    function officer() {
+      return get(/databases/$(database)/documents/officers/$(email()));
+    }
+
+    function isActiveOfficer(roleTier) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/officers/$(email())) &&
+        officer().data.roleTier == roleTier &&
+        officer().data.active != false;
+    }
+
+    function officerZone() {
+      return officer().data.zoneNumber;
+    }
+
+    // --- officers roster: only the super admin manages it ---
+    match /officers/{officerEmail} {
+      allow read: if signedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // --- complaints: citizens create/read; officers see per their scope; ---
+    // --- deterministic fields (department, SLA, zone/ward) stay client- ---
+    // --- computed today, so rules only gate who can touch a doc, not ---
+    // --- which fields - see the "known gap" note in CLAUDE.md. ---
+    match /complaints/{complaintId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn() &&
+        request.resource.data.userId == request.auth.uid;
+
+      allow update: if isSuperAdmin() ||
+        (isActiveOfficer('senior-officer') && resource.data.zone.number == officerZone()) ||
+        (isActiveOfficer('junior-officer') && resource.data.assignedOfficerEmail == email()) ||
+        // citizen support/upvote path only touches supportCount via a
+        // separate transaction in supportComplaint(); still, restrict a
+        // citizen's own direct update to that one field.
+        (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['supportCount', 'updatedAt']));
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // --- votes: one per (complaint, user), keyed "{complaintId}_{userId}" ---
+    match /votes/{voteId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && voteId == (request.resource.data.complaintId + '_' + request.resource.data.userId) &&
+        request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // --- adminNotes / auditLog: officer/admin-only, append-only ---
+    match /adminNotes/{noteId} {
+      allow read: if isSuperAdmin() || isActiveOfficer('senior-officer') || isActiveOfficer('junior-officer');
+      allow create: if isSuperAdmin() || isActiveOfficer('senior-officer') || isActiveOfficer('junior-officer');
+      allow update, delete: if false;
+    }
+
+    match /auditLog/{logId} {
+      allow read: if isSuperAdmin() || isActiveOfficer('senior-officer') || isActiveOfficer('junior-officer');
+      allow create: if signedIn();
+      allow update, delete: if false;
+    }
+  }
+}

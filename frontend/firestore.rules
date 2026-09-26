@@ -1,0 +1,116 @@
+// DRAFT - review before deploying (firebase deploy --only firestore:rules).
+//
+// Mirrors the three-tier officer hierarchy already implemented client-side in
+// src/services/officerService.js:
+//   - super-admin: full access everywhere..
+//   - senior-officer: read/update complaints in their own zone only.
+//   - junior-officer: read/update complaints assigned to them only.
+//   - citizen (signed in, no officer doc): can create a complaint (only as
+//     themselves, only in "Open" status) and support/read complaints, but
+//     cannot edit anything else.
+// The public complaint feed/map (routes "/complaints" and "/map" in
+// src/App.jsx) are unauthenticated in the app, so complaint reads stay public
+// here too - only writes are locked down.
+//
+// IMPORTANT: Firestore rules cannot read the frontend's VITE_ADMIN_EMAILS env
+// var. Keep SUPER_ADMIN_EMAILS below in sync with it by hand, using the same
+// lowercase addresses.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function superAdminEmails() {
+      return ['hakamsinghlodhi674@gmail.com', 'hakamsinghlodhi675@gmail.com'];
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function authEmail() {
+      return isSignedIn() ? request.auth.token.email.lower() : '';
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && authEmail() in superAdminEmails();
+    }
+
+    function officerPath() {
+      return /databases/$(database)/documents/officers/$(authEmail());
+    }
+
+    function isActiveOfficer() {
+      return isSignedIn() && exists(officerPath()) && get(officerPath()).data.get('active', true) != false;
+    }
+
+    function officerRoleTier() {
+      return get(officerPath()).data.get('roleTier', '');
+    }
+
+    function officerZoneNumber() {
+      return get(officerPath()).data.get('zoneNumber', null);
+    }
+
+    function isSeniorOfficerForZone(zoneNumber) {
+      return isActiveOfficer() && officerRoleTier() == 'senior-officer' && officerZoneNumber() == zoneNumber;
+    }
+
+    function isJuniorOfficerAssigned(assignedEmail) {
+      return isActiveOfficer() && officerRoleTier() == 'junior-officer'
+        && authEmail() == (assignedEmail is string ? assignedEmail.lower() : '__none__');
+    }
+
+    // Officer roster: only the Super Admin manages it (matches the "Manage
+    // Officers" screen being super-admin-only in the app), any signed-in
+    // officer/admin can read it to resolve roles/assignments.
+    match /officers/{email} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    match /complaints/{complaintId} {
+      allow read: if true;
+
+      // Must be signed in, can only file as themselves, and can't create a
+      // complaint that's already Resolved/Rejected/etc.
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'Open';
+
+      allow update: if isSuperAdmin()
+        || isSeniorOfficerForZone(resource.data.get('zone', {}).get('number', null))
+        || isJuniorOfficerAssigned(resource.data.get('assignedOfficerEmail', ''))
+        // Any signed-in user may only bump their own support count - nothing else.
+        || (isSignedIn()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['supportCount', 'updatedAt']));
+
+      allow delete: if false;
+    }
+
+    match /auditLog/{entryId} {
+      allow read: if isSuperAdmin();
+      allow create: if isActiveOfficer() || isSuperAdmin();
+      allow update, delete: if false;
+    }
+
+    // One vote per user per complaint - doc id is "{complaintId}_{userId}" so
+    // a duplicate support-tap is a no-op create rather than a second vote.
+    match /votes/{voteId} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Admin note history; only officers/super-admin can annotate a complaint
+    // (matches the update rule's own gating on the complaint doc's adminNotes field).
+    match /adminNotes/{noteId} {
+      allow read: if isSignedIn();
+      allow create: if isActiveOfficer() || isSuperAdmin();
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
