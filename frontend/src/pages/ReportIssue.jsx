@@ -51,9 +51,7 @@ function useSpeechInput() {
     // NON-continuous: one session ends naturally after silence → no repeated words
     recognition.continuous = false;
     recognition.interimResults = true;
-    // hi-IN handles Hinglish (English words mixed in Hindi speech) very well.
-    // The browser also falls back to en-IN words automatically.
-    recognition.lang = "hi-IN";
+    // lang is set dynamically in startListening() based on the user's toggle choice.
     recognition.maxAlternatives = 1;
 
     let sessionFinal = "";
@@ -94,9 +92,11 @@ function useSpeechInput() {
     recognitionRef.current = recognition;
   }, []);
 
-  const startListening = useCallback(() => {
+  const startListening = useCallback((lang = "hi-IN") => {
     if (!recognitionRef.current) return;
     try {
+      // Set the chosen language right before each session starts
+      recognitionRef.current.lang = lang;
       recognitionRef.current.start();
       setListening(true);
     } catch {
@@ -139,6 +139,8 @@ export default function ReportIssue() {
   const [busy, setBusy] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [showMapPicker, setShowMapPicker] = useState(false);
+  // Language toggle for voice input: "hi-IN" = Hindi, "en-IN" = English
+  const [voiceLang, setVoiceLang] = useState("hi-IN");
 
   // Voice input — append each clean session result to description
   const { listening, supported: speechSupported, interim, lastFinal, startListening, stopListening } =
@@ -473,33 +475,55 @@ export default function ReportIssue() {
               <span className="mb-2 block text-sm font-bold">
                 Describe the issue
                 <span className="ml-2 text-xs font-normal text-slate-500">
-                  — Hindi या English में बोलें
+                  — toggle 🇮🇳 / 🇬🇧 to choose language before recording
                 </span>
               </span>
 
               {speechSupported ? (
                 <div className="mb-3">
-                  <button
-                    type="button"
-                    onClick={listening ? stopListening : startListening}
-                    className={`inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm font-semibold transition duration-150 ${
-                      listening
-                        ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
-                        : "border-slate-200 bg-white text-ink shadow-sm hover:border-civic/60 hover:text-civic hover:shadow-card"
-                    }`}
-                  >
-                    {listening ? (
-                      <>
-                        <MicOff size={17} className="animate-pulse" />
-                        Stop recording
-                      </>
-                    ) : (
-                      <>
-                        <Mic size={17} />
-                        {description ? "Add more by voice" : "Start voice description"}
-                      </>
-                    )}
-                  </button>
+                  {/* Language toggle + Mic button row */}
+                  <div className="flex gap-2">
+                    {/* Language toggle pill */}
+                    <button
+                      type="button"
+                      disabled={listening}
+                      onClick={() => setVoiceLang((l) => (l === "hi-IN" ? "en-IN" : "hi-IN"))}
+                      title={voiceLang === "hi-IN" ? "Switch to English" : "Switch to Hindi"}
+                      className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-2.5 text-sm font-bold transition duration-150 ${
+                        listening
+                          ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400"
+                          : "border-slate-200 bg-white text-ink shadow-sm hover:border-civic/60 hover:text-civic hover:shadow-card"
+                      }`}
+                    >
+                      <span className="text-base leading-none">
+                        {voiceLang === "hi-IN" ? "🇮🇳" : "🇬🇧"}
+                      </span>
+                      <span>{voiceLang === "hi-IN" ? "हिं" : "EN"}</span>
+                    </button>
+
+                    {/* Mic / Stop button */}
+                    <button
+                      type="button"
+                      onClick={listening ? stopListening : () => startListening(voiceLang)}
+                      className={`inline-flex flex-1 items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm font-semibold transition duration-150 ${
+                        listening
+                          ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+                          : "border-slate-200 bg-white text-ink shadow-sm hover:border-civic/60 hover:text-civic hover:shadow-card"
+                      }`}
+                    >
+                      {listening ? (
+                        <>
+                          <MicOff size={17} className="animate-pulse" />
+                          Stop recording
+                        </>
+                      ) : (
+                        <>
+                          <Mic size={17} />
+                          {description ? "Add more by voice" : "Start voice description"}
+                        </>
+                      )}
+                    </button>
+                  </div>
 
                   {/* Live interim preview while speaking */}
                   {listening && (
@@ -507,7 +531,9 @@ export default function ReportIssue() {
                       {interim ? (
                         <span className="italic">{interim}<span className="animate-pulse">…</span></span>
                       ) : (
-                        <span className="text-teal-600">🎙️ Listening… speak in Hindi or English</span>
+                        <span className="text-teal-600">
+                          🎙️ Listening in {voiceLang === "hi-IN" ? "Hindi (हिन्दी)" : "English"}…
+                        </span>
                       )}
                     </div>
                   )}
