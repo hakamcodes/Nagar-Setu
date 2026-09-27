@@ -1,16 +1,10 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { BarChart3, Bell, LogOut, Map, Menu, Settings, Shield, User, X } from "lucide-react";
+import { BarChart3, LogOut, Map, Menu, Settings, Shield, User, X } from "lucide-react";
 import { useState } from "react";
 import { useAuth } from "../../state/AuthContext.jsx";
+import { useT } from "../../i18n/useT.js";
 import ToastViewport from "../ui/ToastViewport.jsx";
 import NotificationBell from "./NotificationBell.jsx";
-
-const navItems = [
-  { to: "/", label: "Home" },
-  { to: "/report", label: "Report" },
-  { to: "/complaints", label: "Complaints" },
-  { to: "/map", label: "Map" },
-];
 
 function NavigationLink({ to, label, onClick }) {
   return (
@@ -29,13 +23,11 @@ function NavigationLink({ to, label, onClick }) {
   );
 }
 
-/** Small pill that toggles between EN and हिं */
-function LangToggle({ lang, onToggle, disabled }) {
+function LangToggle({ lang, onToggle }) {
   return (
     <button
       type="button"
       onClick={onToggle}
-      disabled={disabled}
       title={lang === "hi" ? "Switch to English" : "हिंदी में बदलें"}
       className="inline-flex shrink-0 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-ink shadow-sm transition hover:border-civic/60 hover:text-civic"
     >
@@ -47,6 +39,7 @@ function LangToggle({ lang, onToggle, disabled }) {
 
 export default function AppShell() {
   const { user, isAdmin, logout, updateUiLang } = useAuth();
+  const t = useT();
   const [open, setOpen] = useState(false);
   const location = useLocation();
 
@@ -67,36 +60,34 @@ export default function AppShell() {
               NS
             </span>
             <span className="hidden sm:block">
-              <span className="block text-base font-black tracking-tight leading-tight">Nagar Setu</span>
-              <span className="block text-[11px] font-medium text-slate-500 leading-tight">Civic intelligence</span>
+              <span className="block text-base font-black tracking-tight leading-tight">{t.appName}</span>
+              <span className="block text-[11px] font-medium text-slate-500 leading-tight">{t.appTagline}</span>
             </span>
           </NavLink>
 
           {/* Desktop nav */}
           <nav className="hidden items-center gap-0.5 md:flex">
-            {navItems.map((item) => (
-              <NavigationLink key={item.to} {...item} />
-            ))}
-            {user && <NavigationLink to="/my-complaints" label={lang === "hi" ? "मेरी" : "Mine"} />}
-            {isAdmin && <NavigationLink to="/admin" label={lang === "hi" ? "एडमिन" : "Admin"} />}
+            <NavigationLink to="/" label={t.navHome} />
+            <NavigationLink to="/report" label={t.navReport} />
+            <NavigationLink to="/complaints" label={t.navComplaints} />
+            <NavigationLink to="/map" label={t.navMap} />
+            {user && <NavigationLink to="/my-complaints" label={t.navMine} />}
+            {isAdmin && <NavigationLink to="/admin" label={t.navAdmin} />}
           </nav>
 
           {/* Desktop right actions */}
           <div className="hidden items-center gap-2 md:flex">
-            {/* Language toggle — always visible when signed in */}
             {user && <LangToggle lang={lang} onToggle={toggleLang} />}
-
             {user ? (
               <>
-                {/* Notification bell — all signed-in users */}
                 <NotificationBell />
-                <NavLink to="/settings" className="btn-ghost" title="Settings">
+                <NavLink to="/settings" className="btn-ghost" title={t.navSettings}>
                   <Settings size={17} />
                   <span className="hidden lg:inline max-w-[120px] truncate">{user.name}</span>
                 </NavLink>
                 <button type="button" className="btn-secondary" onClick={logout}>
                   <LogOut size={17} />
-                  <span className="hidden lg:inline">{lang === "hi" ? "लॉग आउट" : "Sign out"}</span>
+                  <span className="hidden lg:inline">{t.navSignOut}</span>
                 </button>
               </>
             ) : (
@@ -104,7 +95,7 @@ export default function AppShell() {
                 <LangToggle lang={lang} onToggle={toggleLang} />
                 <NavLink to="/signin" state={{ from: location }} className="btn-primary">
                   <User size={17} />
-                  {lang === "hi" ? "साइन इन" : "Sign in"}
+                  {t.navSignIn}
                 </NavLink>
               </>
             )}
@@ -113,12 +104,7 @@ export default function AppShell() {
           {/* Mobile: notification bell + hamburger */}
           <div className="flex items-center gap-1 md:hidden">
             {user && <NotificationBell />}
-            <button
-              type="button"
-              className="btn-ghost"
-              aria-label="Open menu"
-              onClick={() => setOpen(true)}
-            >
+            <button type="button" className="btn-ghost" aria-label="Open menu" onClick={() => setOpen(true)}>
               <Menu size={22} />
             </button>
           </div>
@@ -138,17 +124,10 @@ export default function AppShell() {
             {/* Drawer header */}
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-4">
               <div className="flex items-center gap-2.5">
-                <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-ink to-teal-900 text-xs font-black text-white">
-                  NS
-                </span>
-                <span className="text-base font-black">Nagar Setu</span>
+                <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-ink to-teal-900 text-xs font-black text-white">NS</span>
+                <span className="text-base font-black">{t.appName}</span>
               </div>
-              <button
-                type="button"
-                className="btn-ghost"
-                aria-label="Close menu"
-                onClick={() => setOpen(false)}
-              >
+              <button type="button" className="btn-ghost" aria-label="Close menu" onClick={() => setOpen(false)}>
                 <X size={20} />
               </button>
             </div>
@@ -168,20 +147,19 @@ export default function AppShell() {
 
             {/* Nav links */}
             <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-4">
-              {navItems.map((item) => (
-                <NavigationLink key={item.to} {...item} onClick={() => setOpen(false)} />
-              ))}
-              {user && <NavigationLink to="/my-complaints" label={lang === "hi" ? "मेरी शिकायतें" : "My complaints"} onClick={() => setOpen(false)} />}
-              {user && <NavigationLink to="/supported" label={lang === "hi" ? "समर्थित मुद्दे" : "Supported issues"} onClick={() => setOpen(false)} />}
-              {isAdmin && <NavigationLink to="/admin" label={lang === "hi" ? "एडमिन डैशबोर्ड" : "Admin dashboard"} onClick={() => setOpen(false)} />}
+              <NavigationLink to="/" label={t.navHome} onClick={() => setOpen(false)} />
+              <NavigationLink to="/report" label={t.navReport} onClick={() => setOpen(false)} />
+              <NavigationLink to="/complaints" label={t.navComplaints} onClick={() => setOpen(false)} />
+              <NavigationLink to="/map" label={t.navMap} onClick={() => setOpen(false)} />
+              {user && <NavigationLink to="/my-complaints" label={t.navMyComplaints} onClick={() => setOpen(false)} />}
+              {user && <NavigationLink to="/supported" label={t.navSupported} onClick={() => setOpen(false)} />}
+              {isAdmin && <NavigationLink to="/admin" label={t.navAdminDashboard} onClick={() => setOpen(false)} />}
 
               <div className="my-2 border-t border-slate-100" />
 
-              {/* Language toggle in drawer */}
+              {/* Language toggle */}
               <div className="flex items-center justify-between rounded-md px-3 py-2">
-                <span className="text-sm font-semibold text-slate-600">
-                  {lang === "hi" ? "भाषा" : "Language"}
-                </span>
+                <span className="text-sm font-semibold text-slate-600">{t.navLanguage}</span>
                 <LangToggle lang={lang} onToggle={toggleLang} />
               </div>
 
@@ -196,7 +174,7 @@ export default function AppShell() {
                   }
                 >
                   <Settings size={16} />
-                  {lang === "hi" ? "सेटिंग्स" : "Settings"}
+                  {t.navSettings}
                 </NavLink>
               )}
             </nav>
@@ -206,17 +184,12 @@ export default function AppShell() {
               {user ? (
                 <button type="button" className="btn-secondary w-full" onClick={() => { logout(); setOpen(false); }}>
                   <LogOut size={16} />
-                  {lang === "hi" ? "लॉग आउट" : "Sign out"}
+                  {t.navSignOut}
                 </button>
               ) : (
-                <NavLink
-                  to="/signin"
-                  state={{ from: location }}
-                  className="btn-primary w-full"
-                  onClick={() => setOpen(false)}
-                >
+                <NavLink to="/signin" state={{ from: location }} className="btn-primary w-full" onClick={() => setOpen(false)}>
                   <User size={16} />
-                  {lang === "hi" ? "साइन इन करें" : "Sign in"}
+                  {t.navSignIn}
                 </NavLink>
               )}
             </div>
@@ -224,15 +197,11 @@ export default function AppShell() {
         </div>
       )}
 
-      <main>
-        <Outlet />
-      </main>
+      <main><Outlet /></main>
 
       <footer className="border-t border-slate-200 bg-white/70">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-5 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
-          <span className="leading-relaxed">
-            Nagar Setu is piloted in Bhopal with real ward/zone GIS data, and supports future cities by configuration.
-          </span>
+          <span className="leading-relaxed">{t.footerText}</span>
           <span className="flex flex-wrap items-center gap-3 shrink-0">
             <span className="inline-flex items-center gap-1.5"><Map size={13} className="text-civic" /> Leaflet + OSM</span>
             <span className="inline-flex items-center gap-1.5"><Shield size={13} className="text-civic" /> Role protected</span>

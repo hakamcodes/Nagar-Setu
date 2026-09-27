@@ -9,6 +9,7 @@ import { useData } from "../state/DataContext.jsx";
 import { useRegion } from "../state/RegionContext.jsx";
 import { useToast } from "../state/ToastContext.jsx";
 import { getBrowserLocation } from "../utils/geo.js";
+import { useT } from "../i18n/useT.js";
 
 // ─── Smart scoring ─────────────────────────────────────────────────────────────
 // Ward issues get a large fixed boost so they always lead.
@@ -31,6 +32,7 @@ export default function ComplaintFeed() {
   const { complaints, loading } = useData();
   const { activeRegion } = useRegion();
   const { showToast } = useToast();
+  const t = useT();
 
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
@@ -72,7 +74,6 @@ export default function ComplaintFeed() {
     );
 
     if (!userWardNumber) {
-      // No homeWard — smart sort still ranks by impact + supporters + recency
       return { myWardComplaints: [], otherComplaints: sorted };
     }
 
@@ -146,11 +147,11 @@ export default function ComplaintFeed() {
         {/* ── Page header ── */}
         <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="eyebrow">Public feed</p>
-            <h1 className="page-title">Live complaints</h1>
+            <p className="eyebrow">{t.feedEyebrow}</p>
+            <h1 className="page-title">{t.feedTitle}</h1>
             {!loading && (
               <p className="mt-2 text-sm font-semibold text-slate-500">
-                {totalFiltered} of {regionComplaints.length} complaints shown
+                {t.feedShown(totalFiltered, regionComplaints.length)}
               </p>
             )}
           </div>
@@ -161,17 +162,17 @@ export default function ComplaintFeed() {
                 className="field pl-9"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search issues"
+                placeholder={t.feedSearch}
               />
             </label>
             <select className="field" value={status} onChange={(event) => setStatus(event.target.value)}>
-              <option value="">All statuses</option>
+              <option value="">{t.feedAllStatuses}</option>
               {complaintStatuses.map((item) => (
                 <option key={item}>{item}</option>
               ))}
             </select>
             <select className="field" value={category} onChange={(event) => setCategory(event.target.value)}>
-              <option value="">All categories</option>
+              <option value="">{t.feedAllCategories}</option>
               {issueCategories.map((item) => (
                 <option key={item}>{item}</option>
               ))}
@@ -191,7 +192,7 @@ export default function ComplaintFeed() {
             }`}
           >
             <Sparkles size={12} />
-            Smart sort
+            {t.feedSortSmart}
           </button>
           <button
             type="button"
@@ -203,13 +204,11 @@ export default function ComplaintFeed() {
             }`}
           >
             <Clock size={12} />
-            Newest first
+            {t.feedSortNewest}
           </button>
           {sortMode === "smart" && (
             <span className="text-xs text-slate-400">
-              {user?.homeWard
-                ? `Ranked by ward · civic impact · supporters`
-                : "Ranked by civic impact · supporters"}
+              {user?.homeWard ? t.feedRankedWard : t.feedRankedImpact}
             </span>
           )}
         </div>
@@ -223,10 +222,8 @@ export default function ComplaintFeed() {
                   <Home size={16} />
                 </span>
                 <div>
-                  <p className="text-sm font-bold text-teal-900">Set your home ward for a personalised feed</p>
-                  <p className="text-xs text-teal-700">
-                    Issues from your ward appear first, and you get notified when new ones are reported.
-                  </p>
+                  <p className="text-sm font-bold text-teal-900">{t.feedWardBannerTitle}</p>
+                  <p className="text-xs text-teal-700">{t.feedWardBannerDesc}</p>
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -237,7 +234,7 @@ export default function ComplaintFeed() {
                   className="inline-flex items-center gap-1.5 rounded-lg border border-teal-300 bg-white px-3 py-2 text-xs font-semibold text-teal-800 shadow-sm transition hover:bg-teal-100 disabled:opacity-60"
                 >
                   <LocateFixed size={13} />
-                  {locating ? "Detecting…" : "Use my location"}
+                  {locating ? t.feedDetecting : t.feedUseLocation}
                 </button>
                 <button
                   type="button"
@@ -245,14 +242,14 @@ export default function ComplaintFeed() {
                   className="inline-flex items-center gap-1.5 rounded-lg border border-teal-300 bg-white px-3 py-2 text-xs font-semibold text-teal-800 shadow-sm transition hover:bg-teal-100"
                 >
                   <MapPinned size={13} />
-                  Pick on map
+                  {t.feedPickMap}
                 </button>
                 <button
                   type="button"
                   onClick={() => setBannerDismissed(true)}
                   className="text-xs text-teal-500 underline transition hover:text-teal-700"
                 >
-                  Later
+                  {t.feedLater}
                 </button>
               </div>
             </div>
@@ -278,7 +275,7 @@ export default function ComplaintFeed() {
                     Ward {user.homeWard.number} — {user.homeWard.name}
                   </span>
                   <span className="ml-auto text-xs text-teal-600">
-                    {myWardComplaints.length} issue{myWardComplaints.length !== 1 ? "s" : ""}
+                    {t.feedIssues(myWardComplaints.length)}
                   </span>
                 </div>
                 {myWardComplaints.map((complaint) => (
@@ -295,7 +292,7 @@ export default function ComplaintFeed() {
             {myWardComplaints.length > 0 && otherComplaints.length > 0 && (
               <div className="col-span-full mt-2 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5">
                 <Sparkles size={15} className="text-slate-400" />
-                <span className="text-sm font-bold text-slate-500">Top Issues by Civic Impact &amp; Support</span>
+                <span className="text-sm font-bold text-slate-500">{t.feedTopIssues}</span>
               </div>
             )}
 
@@ -307,7 +304,7 @@ export default function ComplaintFeed() {
             {totalFiltered === 0 && (
               <div className="card col-span-full grid place-items-center gap-3 p-10 text-center text-slate-500">
                 <Inbox size={28} className="text-slate-300" />
-                No complaints match these filters yet.
+                {t.feedEmpty}
               </div>
             )}
           </div>

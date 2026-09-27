@@ -3,10 +3,12 @@ import MapPanel from "../components/map/MapPanel.jsx";
 import { complaintStatuses, getAreaLabel, getRegion, issueCategories, priorities } from "../config/regions.js";
 import { useData } from "../state/DataContext.jsx";
 import { useRegion } from "../state/RegionContext.jsx";
+import { useT } from "../i18n/useT.js";
 
 export default function MapPage() {
   const { complaints } = useData();
   const { activeRegion } = useRegion();
+  const t = useT();
   const region = getRegion(activeRegion);
   const areaLabel = getAreaLabel(region.regionId);
   const [status, setStatus] = useState("");
@@ -31,20 +33,20 @@ export default function MapPage() {
     <section className="section">
       <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="eyebrow">Live map</p>
-          <h1 className="page-title">Mapped complaints, wards, and zones</h1>
+          <p className="eyebrow">{t.mapEyebrow}</p>
+          <h1 className="page-title">{t.mapTitle}</h1>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 lg:w-[820px]">
           <select className="field" value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="">All statuses</option>
+            <option value="">{t.mapAllStatuses}</option>
             {complaintStatuses.map((item) => <option key={item}>{item}</option>)}
           </select>
           <select className="field" value={category} onChange={(event) => setCategory(event.target.value)}>
-            <option value="">All categories</option>
+            <option value="">{t.mapAllCategories}</option>
             {issueCategories.map((item) => <option key={item}>{item}</option>)}
           </select>
           <select className="field" value={priority} onChange={(event) => setPriority(event.target.value)}>
-            <option value="">All priorities</option>
+            <option value="">{t.mapAllPriorities}</option>
             {priorities.map((item) => <option key={item}>{item}</option>)}
           </select>
           <select className="field" value={ward} onChange={(event) => setWard(event.target.value)}>

@@ -6,18 +6,13 @@ import { getRegion } from "../config/regions.js";
 import { useAuth } from "../state/AuthContext.jsx";
 import { useData } from "../state/DataContext.jsx";
 import { useRegion } from "../state/RegionContext.jsx";
+import { useT } from "../i18n/useT.js";
 import StatCard from "../components/ui/StatCard.jsx";
 import ComplaintCard from "../components/complaints/ComplaintCard.jsx";
 
-const features = [
-  { icon: MapPinned, title: "Real ward detection", text: "GPS is matched against real municipal ward and zone polygons using point-in-polygon containment, not manual selection." },
-  { icon: Sparkles, title: "AI triage", text: "Complaints get category, severity, risk indicators, civic impact score, and a suggested department without replacing civic workflow logic." },
-  { icon: Radar, title: "Duplicate control", text: "Nearby, similar, recent complaints are promoted for support instead of creating noisy duplicate records." },
-  { icon: BarChart3, title: "Admin intelligence", text: "Moderators see hotspots, ward/zone trends, department performance, SLA breaches, assignments, and resolution actions." },
-];
-
 export default function Home() {
   const { isAdmin } = useAuth();
+  const t = useT();
   const { complaints, officers } = useData();
   const { activeRegion } = useRegion();
   const region = getRegion(activeRegion);
@@ -27,6 +22,13 @@ export default function Home() {
   );
   const analytics = useMemo(() => buildAnalytics(regionComplaints, officers), [officers, regionComplaints]);
   const latest = regionComplaints.slice(0, 3);
+
+  const features = [
+    { icon: MapPinned, title: t.feat1Title, text: t.feat1Text },
+    { icon: Sparkles,  title: t.feat2Title, text: t.feat2Text },
+    { icon: Radar,     title: t.feat3Title, text: t.feat3Text },
+    { icon: BarChart3, title: t.feat4Title, text: t.feat4Text },
+  ];
 
   return (
     <>
@@ -40,26 +42,25 @@ export default function Home() {
             <div className="mb-5 flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-sm font-bold text-teal-800 shadow-sm">
                 <ShieldCheck size={16} />
-                Civic intelligence platform for {region.name}
+                {t.homeBadge} {region.name}
               </span>
-
             </div>
             <h1 className="max-w-4xl text-5xl font-black tracking-tight text-ink sm:text-6xl lg:text-7xl">
-              Nagar <span className="text-civic">Setu</span>
+              {t.homeHero} <span className="text-civic">{t.homeHeroAccent}</span>
             </h1>
             <p className="mt-5 max-w-2xl text-lg font-medium leading-8 text-slate-700">
-              A real-time civic complaint intelligence platform for {region.name}. Citizens report issues with GPS-detected wards and zones; {region.municipality || "municipal"} administrators receive mapped, deduplicated, prioritized, and department-routed work queues.
+              {t.homeSubtitle}
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link to="/report" className="btn-primary px-5 py-3">
-                Report Issue <ArrowRight size={18} />
+                {t.homeCtaReport} <ArrowRight size={18} />
               </Link>
               <Link to="/complaints" className="btn-secondary px-5 py-3">
-                View Live Complaints
+                {t.homeCtaComplaints}
               </Link>
               {isAdmin && (
                 <Link to="/admin" className="btn-secondary px-5 py-3">
-                  Admin Dashboard
+                  {t.homeCtaAdmin}
                 </Link>
               )}
             </div>
@@ -68,17 +69,17 @@ export default function Home() {
           <div className="card overflow-hidden shadow-lift">
             <div className="bg-gradient-to-br from-ink to-teal-950 p-5 text-white">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-bold text-teal-100">Live pilot command view</span>
+                <span className="text-sm font-bold text-teal-100">{t.homeLiveView}</span>
                 <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold">{region.name}</span>
               </div>
               <div className="mt-6 grid grid-cols-2 gap-3">
                 <div className="rounded-lg bg-white/10 p-4 backdrop-blur-sm">
                   <p className="text-3xl font-black">{analytics.unresolved}</p>
-                  <p className="text-sm text-slate-200">Unresolved</p>
+                  <p className="text-sm text-slate-200">{t.homeUnresolved}</p>
                 </div>
                 <div className="rounded-lg bg-white/10 p-4 backdrop-blur-sm">
                   <p className="text-3xl font-black">{analytics.resolved}</p>
-                  <p className="text-sm text-slate-200">Resolved</p>
+                  <p className="text-sm text-slate-200">{t.homeResolved}</p>
                 </div>
               </div>
             </div>
@@ -92,21 +93,19 @@ export default function Home() {
       </section>
 
       <section className="section grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total complaints" value={analytics.total} icon={Layers3} tone="teal" />
-        <StatCard label="Open" value={analytics.open} icon={Radar} tone="blue" />
-        <StatCard label="In progress" value={analytics.inProgress} icon={ThumbsUp} tone="amber" />
-        <StatCard label="Resolved" value={analytics.resolved} icon={CheckCircle2} tone="teal" />
+        <StatCard label={t.statTotal}    value={analytics.total}      icon={Layers3}      tone="teal" />
+        <StatCard label={t.statOpen}     value={analytics.open}       icon={Radar}        tone="blue" />
+        <StatCard label={t.statInProgress} value={analytics.inProgress} icon={ThumbsUp}   tone="amber" />
+        <StatCard label={t.statResolved} value={analytics.resolved}   icon={CheckCircle2} tone="teal" />
       </section>
 
       <section className="section">
         <div className="grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
           <div>
-            <p className="eyebrow">Problem to workflow</p>
-            <h2 className="mt-3 text-3xl font-black tracking-tight text-ink">From scattered complaints to accountable resolution.</h2>
+            <p className="eyebrow">{t.homeSectionEyebrow}</p>
+            <h2 className="mt-3 text-3xl font-black tracking-tight text-ink">{t.homeSectionTitle}</h2>
           </div>
-          <p className="text-base leading-7 text-slate-700">
-            People should not need to know which office owns a pothole, drain, light, or maintenance issue. Nagar Setu captures the evidence, maps the zone, classifies the work, checks for duplicates, gathers public support, and gives authorities a single operational dashboard.
-          </p>
+          <p className="text-base leading-7 text-slate-700">{t.homeSectionBody}</p>
         </div>
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {features.map((feature) => (

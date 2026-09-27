@@ -8,11 +8,13 @@ import { getBrowserLocation } from "../utils/geo.js";
 import { useAuth } from "../state/AuthContext.jsx";
 import { useRegion } from "../state/RegionContext.jsx";
 import { useToast } from "../state/ToastContext.jsx";
+import { useT } from "../i18n/useT.js";
 
 export default function Settings() {
   const { user, updateHomeLocation, updateUiLang } = useAuth();
   const { activeRegion, setActiveRegion } = useRegion();
   const { showToast } = useToast();
+  const t = useT();
 
   const [showMapPicker, setShowMapPicker] = useState(false);
   const [locating, setLocating] = useState(false);
@@ -30,7 +32,6 @@ export default function Settings() {
     showToast("Region preference updated.");
   }
 
-  // Detect home ward via GPS
   const detectWard = useCallback(async () => {
     setLocating(true);
     try {
@@ -49,7 +50,6 @@ export default function Settings() {
     }
   }, [region, showToast, updateHomeLocation]);
 
-  // Detect home ward via map pin
   const handleMapPick = useCallback(
     async (coords) => {
       setShowMapPicker(false);
@@ -84,22 +84,22 @@ export default function Settings() {
       )}
 
       <section className="section max-w-4xl">
-        <p className="eyebrow">Account</p>
-        <h1 className="page-title">Settings</h1>
+        <p className="eyebrow">{t.settingsEyebrow}</p>
+        <h1 className="page-title">{t.settingsTitle}</h1>
         <div className="mt-6 grid gap-5">
 
           {/* ── Profile ── */}
           <div className="card p-5">
             <h2 className="flex items-center gap-2 text-xl font-black">
-              <UserCog size={20} className="text-civic" /> Profile
+              <UserCog size={20} className="text-civic" /> {t.settingsProfileTitle}
             </h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label>
-                <span className="mb-1 block text-sm font-bold">Name</span>
+                <span className="mb-1 block text-sm font-bold">{t.settingsNameLabel}</span>
                 <input className="field" value={user.name} readOnly />
               </label>
               <label>
-                <span className="mb-1 block text-sm font-bold">Role</span>
+                <span className="mb-1 block text-sm font-bold">{t.settingsRoleLabel}</span>
                 <input className="field capitalize" value={user.role?.replace(/-/g, " ")} readOnly />
               </label>
             </div>
@@ -108,14 +108,10 @@ export default function Settings() {
           {/* ── Home Ward ── */}
           <div className="card p-5">
             <h2 className="flex items-center gap-2 text-xl font-black">
-              <MapPin size={20} className="text-civic" /> Home Ward
+              <MapPin size={20} className="text-civic" /> {t.settingsHomeWardTitle}
             </h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Issues from your home ward appear at the top of the feed in Smart mode, and you
-              get an in-app notification whenever a new issue is reported there.
-            </p>
+            <p className="mt-2 text-sm text-slate-600">{t.settingsHomeWardDesc}</p>
 
-            {/* Current ward display */}
             {user?.homeWard ? (
               <div className="mt-4 flex items-start justify-between gap-3 rounded-lg border border-teal-200 bg-teal-50 px-4 py-3">
                 <div>
@@ -133,68 +129,49 @@ export default function Settings() {
                   onClick={() => { updateHomeLocation(null, null, null); showToast("Home ward cleared."); }}
                   className="shrink-0 text-xs text-red-400 transition hover:text-red-600"
                 >
-                  Clear
+                  {t.settingsClearWard}
                 </button>
               </div>
             ) : (
               <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                No home ward set. Use one of the buttons below to set your location.
+                {t.settingsNoWard}
               </p>
             )}
 
-            {/* Picker buttons */}
             <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={detectWard}
-                disabled={locating}
-              >
+              <button type="button" className="btn-secondary" onClick={detectWard} disabled={locating}>
                 <LocateFixed size={16} />
-                {locating ? "Detecting…" : "Use current location"}
+                {locating ? t.settingsDetecting : t.settingsUseLocation}
               </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => setShowMapPicker(true)}
-              >
+              <button type="button" className="btn-secondary" onClick={() => setShowMapPicker(true)}>
                 <MapPinned size={16} />
-                Pick on map
+                {t.settingsPickMap}
               </button>
             </div>
-            <p className="mt-3 text-xs text-slate-400">
-              Your ward is detected from the GPS or map pin using the ward boundary data for{" "}
-              <strong>{region.name}</strong>. You can change it any time.
-            </p>
+            <p className="mt-3 text-xs text-slate-400">{t.settingsWardHint(region.name)}</p>
           </div>
 
           {/* ── Region preference ── */}
           <div className="card p-5">
-            <h2 className="text-xl font-black">Region preference</h2>
+            <h2 className="text-xl font-black">{t.settingsRegionTitle}</h2>
             <select
               className="field mt-4"
               value={activeRegion}
               onChange={(event) => changeRegion(event.target.value)}
             >
               {regions.map((r) => (
-                <option key={r.regionId} value={r.regionId}>
-                  {r.name}
-                </option>
+                <option key={r.regionId} value={r.regionId}>{r.name}</option>
               ))}
             </select>
-            <p className="mt-3 text-sm text-slate-600">
-              More regions can be added through config or Firestore records.
-            </p>
+            <p className="mt-3 text-sm text-slate-600">{t.settingsRegionHint}</p>
           </div>
 
           {/* ── Language preference ── */}
           <div className="card p-5">
             <h2 className="flex items-center gap-2 text-xl font-black">
-              <Globe size={20} className="text-civic" /> Language
+              <Globe size={20} className="text-civic" /> {t.settingsLangTitle}
             </h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Choose the language for the app interface. Hindi support applies to navigation labels and voice prompts.
-            </p>
+            <p className="mt-2 text-sm text-slate-600">{t.settingsLangDesc}</p>
             <div className="mt-4 flex gap-3">
               <button
                 type="button"
@@ -205,7 +182,7 @@ export default function Settings() {
                     : "border-slate-200 bg-white text-ink hover:border-civic/60 hover:text-civic"
                 }`}
               >
-                🇬🇧 English
+                {t.settingsLangEn}
               </button>
               <button
                 type="button"
@@ -216,21 +193,18 @@ export default function Settings() {
                     : "border-slate-200 bg-white text-ink hover:border-civic/60 hover:text-civic"
                 }`}
               >
-                🇮🇳 हिंदी
+                {t.settingsLangHi}
               </button>
             </div>
           </div>
 
           {/* ── Prototype controls ── */}
           <div className="card p-5">
-            <h2 className="text-xl font-black">Prototype controls</h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Local mode stores demo reports and compressed Base64 images in browser storage.
-              Firestore mode uses your Firebase project.
-            </p>
+            <h2 className="text-xl font-black">{t.settingsProtoTitle}</h2>
+            <p className="mt-2 text-sm text-slate-600">{t.settingsProtoDesc}</p>
             <button type="button" className="btn-secondary mt-4" onClick={reset}>
               <RotateCcw size={16} />
-              Reset pilot data
+              {t.settingsResetBtn}
             </button>
           </div>
 
