@@ -26,20 +26,16 @@ import { useToast } from "../state/ToastContext.jsx";
 import { PriorityBadge } from "../components/ui/Badge.jsx";
 import LocationPickerModal from "../components/map/LocationPickerModal.jsx";
 
-// ─── Voice input hook (continuous with 5-second silence timeout) ──────────────
+// ─── Voice input hook ─────────────────────────────────────────────────────────
+// Matches ReportIssue: NON-continuous, language set per-call in startListening().
 
-const SILENCE_TIMEOUT_MS = 5000; // stop only after 5 s of no speech
-
-function useSpeechInput(lang = "hi-IN") {
+function useSpeechInput() {
   const recognitionRef = useRef(null);
-  const silenceTimerRef = useRef(null);
-  const sessionFinalRef = useRef("");
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(true);
   const [interim, setInterim] = useState("");
   const [lastFinal, setLastFinal] = useState(null);
 
-  // Rebuild recognition whenever lang changes
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -47,75 +43,52 @@ function useSpeechInput(lang = "hi-IN") {
       return;
     }
 
-    // Tear down any previous instance
-    if (recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch { /* ignore */ }
-    }
-    clearTimeout(silenceTimerRef.current);
-
     const recognition = new SpeechRecognition();
-    recognition.continuous = true;      // keep listening across pauses
+    recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.lang = lang;
     recognition.maxAlternatives = 1;
 
-    const resetSilenceTimer = () => {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = setTimeout(() => {
-        // 5 s of silence — stop gracefully
-        recognition.stop();
-      }, SILENCE_TIMEOUT_MS);
-    };
+    let sessionFinal = "";
 
     recognition.onstart = () => {
-      sessionFinalRef.current = "";
+      sessionFinal = "";
       setInterim("");
-      resetSilenceTimer();
     };
 
     recognition.onresult = (event) => {
       let interimText = "";
-      // continuous mode: iterate only new results (event.resultIndex onward)
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      for (let i = 0; i < event.results.length; i++) {
         const t = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          sessionFinalRef.current += t + " ";
+          sessionFinal += t + " ";
         } else {
           interimText = t;
         }
       }
       setInterim(interimText);
-      // Any speech activity resets the silence timer
-      resetSilenceTimer();
     };
 
     recognition.onerror = (event) => {
-      if (event.error === "no-speech") return; // ignore — we handle via our own timer
-      clearTimeout(silenceTimerRef.current);
-      setListening(false);
-      setInterim("");
+      if (event.error !== "no-speech") {
+        setListening(false);
+        setInterim("");
+      }
     };
 
     recognition.onend = () => {
-      clearTimeout(silenceTimerRef.current);
       setListening(false);
       setInterim("");
-      const clean = sessionFinalRef.current.trim();
+      const clean = sessionFinal.trim();
       if (clean) setLastFinal(clean);
     };
 
     recognitionRef.current = recognition;
+  }, []);
 
-    return () => {
-      clearTimeout(silenceTimerRef.current);
-      try { recognition.abort(); } catch { /* ignore */ }
-    };
-  }, [lang]);
-
-  const startListening = useCallback(() => {
+  const startListening = useCallback((lang = "hi-IN") => {
     if (!recognitionRef.current) return;
     try {
-      sessionFinalRef.current = "";
+      recognitionRef.current.lang = lang;
       recognitionRef.current.start();
       setListening(true);
     } catch {
@@ -124,7 +97,6 @@ function useSpeechInput(lang = "hi-IN") {
   }, []);
 
   const stopListening = useCallback(() => {
-    clearTimeout(silenceTimerRef.current);
     if (!recognitionRef.current) return;
     recognitionRef.current.stop();
   }, []);
@@ -152,7 +124,8 @@ export default function CompleteDraft() {
   const [duplicate, setDuplicate] = useState(null);
   const [busy, setBusy] = useState(false);
   const [showMapPicker, setShowMapPicker] = useState(false);
-  const [speechLang, setSpeechLang] = useState("hi-IN");
+  // Language toggle for voice input: "hi-IN" = Hindi, "en-IN" = English
+  const [voiceLang, setVoiceLang] = useState("hi-IN");
 
   const region = useMemo(
     () => getRegion(draft?.regionId || user?.regionPreference),
@@ -200,7 +173,7 @@ export default function CompleteDraft() {
 
   // Voice input — append each clean session to description
   const { listening, supported: speechSupported, interim, lastFinal, startListening, stopListening } =
-    useSpeechInput(speechLang);
+    useSpeechInput();
 
   const lastFinalRef = useRef(null);
   useEffect(() => {
