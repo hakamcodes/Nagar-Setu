@@ -26,67 +26,96 @@ import { useToast } from "../state/ToastContext.jsx";
 import { PriorityBadge } from "../components/ui/Badge.jsx";
 import LocationPickerModal from "../components/map/LocationPickerModal.jsx";
 
-// ─── Voice input hook (non-continuous — one clean session per press) ─────────
+// ─── Voice input hook (continuous with 5-second silence timeout) ──────────────
 
-function useSpeechInput() {
+const SILENCE_TIMEOUT_MS = 5000; // stop only after 5 s of no speech
+
+function useSpeechInput(lang = "hi-IN") {
   const recognitionRef = useRef(null);
+  const silenceTimerRef = useRef(null);
+  const sessionFinalRef = useRef("");
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(true);
   const [interim, setInterim] = useState("");
   const [lastFinal, setLastFinal] = useState(null);
 
+  // Rebuild recognition whenever lang changes
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       setSupported(false);
       return;
     }
+
+    // Tear down any previous instance
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch { /* ignore */ }
+    }
+    clearTimeout(silenceTimerRef.current);
+
     const recognition = new SpeechRecognition();
-    recognition.continuous = false;
+    recognition.continuous = true;      // keep listening across pauses
     recognition.interimResults = true;
-    recognition.lang = "hi-IN";
+    recognition.lang = lang;
     recognition.maxAlternatives = 1;
 
-    let sessionFinal = "";
+    const resetSilenceTimer = () => {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(() => {
+        // 5 s of silence — stop gracefully
+        recognition.stop();
+      }, SILENCE_TIMEOUT_MS);
+    };
 
     recognition.onstart = () => {
-      sessionFinal = "";
+      sessionFinalRef.current = "";
       setInterim("");
+      resetSilenceTimer();
     };
 
     recognition.onresult = (event) => {
       let interimText = "";
-      for (let i = 0; i < event.results.length; i++) {
+      // continuous mode: iterate only new results (event.resultIndex onward)
+      for (let i = event.resultIndex; i < event.results.length; i++) {
         const t = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          sessionFinal += t + " ";
+          sessionFinalRef.current += t + " ";
         } else {
           interimText = t;
         }
       }
       setInterim(interimText);
+      // Any speech activity resets the silence timer
+      resetSilenceTimer();
     };
 
     recognition.onerror = (event) => {
-      if (event.error !== "no-speech") {
-        setListening(false);
-        setInterim("");
-      }
+      if (event.error === "no-speech") return; // ignore — we handle via our own timer
+      clearTimeout(silenceTimerRef.current);
+      setListening(false);
+      setInterim("");
     };
 
     recognition.onend = () => {
+      clearTimeout(silenceTimerRef.current);
       setListening(false);
       setInterim("");
-      const clean = sessionFinal.trim();
+      const clean = sessionFinalRef.current.trim();
       if (clean) setLastFinal(clean);
     };
 
     recognitionRef.current = recognition;
-  }, []);
+
+    return () => {
+      clearTimeout(silenceTimerRef.current);
+      try { recognition.abort(); } catch { /* ignore */ }
+    };
+  }, [lang]);
 
   const startListening = useCallback(() => {
     if (!recognitionRef.current) return;
     try {
+      sessionFinalRef.current = "";
       recognitionRef.current.start();
       setListening(true);
     } catch {
@@ -95,6 +124,7 @@ function useSpeechInput() {
   }, []);
 
   const stopListening = useCallback(() => {
+    clearTimeout(silenceTimerRef.current);
     if (!recognitionRef.current) return;
     recognitionRef.current.stop();
   }, []);
@@ -122,6 +152,7 @@ export default function CompleteDraft() {
   const [duplicate, setDuplicate] = useState(null);
   const [busy, setBusy] = useState(false);
   const [showMapPicker, setShowMapPicker] = useState(false);
+  const [speechLang, setSpeechLang] = useState("hi-IN");
 
   const region = useMemo(
     () => getRegion(draft?.regionId || user?.regionPreference),
@@ -169,7 +200,7 @@ export default function CompleteDraft() {
 
   // Voice input — append each clean session to description
   const { listening, supported: speechSupported, interim, lastFinal, startListening, stopListening } =
-    useSpeechInput();
+    useSpeechInput(speechLang);
 
   const lastFinalRef = useRef(null);
   useEffect(() => {
@@ -427,7 +458,27 @@ export default function CompleteDraft() {
             </span>
 
             {speechSupported ? (
-              <div className="mb-3">
+              <div className="mb-3 space-y-2">
+                {/* Language selector */}
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-slate-500 shrink-0">🌐 Language:</label>
+                  <select
+                    className="field py-1 text-xs"
+                    value={speechLang}
+                    disabled={listening}
+                    onChange={(e) => setSpeechLang(e.target.value)}
+                  >
+                    <option value="hi-IN">हिंदी (Hindi)</option>
+                    <option value="en-IN">English (India)</option>
+                    <option value="mr-IN">मराठी (Marathi)</option>
+                    <option value="ta-IN">தமிழ் (Tamil)</option>
+                    <option value="te-IN">తెలుగు (Telugu)</option>
+                    <option value="bn-IN">বাংলা (Bengali)</option>
+                    <option value="gu-IN">ગુજરાતી (Gujarati)</option>
+                  </select>
+                </div>
+
+                {/* Mic button */}
                 <button
                   type="button"
                   onClick={listening ? stopListening : startListening}
@@ -450,15 +501,15 @@ export default function CompleteDraft() {
                   )}
                 </button>
                 {listening && interim && (
-                  <div className="mt-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800 italic">
+                  <div className="rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800 italic">
                     <span className="mr-1 font-semibold not-italic text-teal-600">Hearing:</span>
                     {interim}
                     <span className="ml-1 animate-pulse">…</span>
                   </div>
                 )}
                 {listening && (
-                  <p className="mt-1 text-center text-xs text-slate-500">
-                    🎙️ Listening… speak clearly in Hindi or English
+                  <p className="text-center text-xs text-slate-500">
+                    🎙️ Listening… auto-stops after 5 s of silence
                   </p>
                 )}
               </div>
