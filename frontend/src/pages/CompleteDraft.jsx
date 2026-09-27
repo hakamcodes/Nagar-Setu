@@ -426,64 +426,67 @@ export default function CompleteDraft() {
             <span className="mb-2 block text-sm font-bold">
               Describe the issue
               <span className="ml-2 text-xs font-normal text-slate-500">
-                — speak in Hindi or English
+                — toggle 🇮🇳 / 🇬🇧 to choose language before recording
               </span>
             </span>
 
             {speechSupported ? (
-              <div className="mb-3 space-y-2">
-                {/* Language selector */}
-                <div className="flex items-center gap-2">
-                  <label className="text-xs font-semibold text-slate-500 shrink-0">🌐 Language:</label>
-                  <select
-                    className="field py-1 text-xs"
-                    value={speechLang}
+              <div className="mb-3">
+                {/* Language toggle + Mic button row */}
+                <div className="flex gap-2">
+                  {/* Language toggle pill */}
+                  <button
+                    type="button"
                     disabled={listening}
-                    onChange={(e) => setSpeechLang(e.target.value)}
+                    onClick={() => setVoiceLang((l) => (l === "hi-IN" ? "en-IN" : "hi-IN"))}
+                    title={voiceLang === "hi-IN" ? "Switch to English" : "Switch to Hindi"}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-2.5 text-sm font-bold transition duration-150 ${
+                      listening
+                        ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400"
+                        : "border-slate-200 bg-white text-ink shadow-sm hover:border-civic/60 hover:text-civic hover:shadow-card"
+                    }`}
                   >
-                    <option value="hi-IN">हिंदी (Hindi)</option>
-                    <option value="en-IN">English (India)</option>
-                    <option value="mr-IN">मराठी (Marathi)</option>
-                    <option value="ta-IN">தமிழ் (Tamil)</option>
-                    <option value="te-IN">తెలుగు (Telugu)</option>
-                    <option value="bn-IN">বাংলা (Bengali)</option>
-                    <option value="gu-IN">ગુજરાતી (Gujarati)</option>
-                  </select>
+                    <span className="text-base leading-none">
+                      {voiceLang === "hi-IN" ? "🇮🇳" : "🇬🇧"}
+                    </span>
+                    <span>{voiceLang === "hi-IN" ? "हिं" : "EN"}</span>
+                  </button>
+
+                  {/* Mic / Stop button */}
+                  <button
+                    type="button"
+                    onClick={listening ? stopListening : () => startListening(voiceLang)}
+                    className={`inline-flex flex-1 items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm font-semibold transition duration-150 ${
+                      listening
+                        ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+                        : "border-slate-200 bg-white text-ink shadow-sm hover:border-civic/60 hover:text-civic hover:shadow-card"
+                    }`}
+                  >
+                    {listening ? (
+                      <>
+                        <MicOff size={17} className="animate-pulse" />
+                        Stop recording
+                      </>
+                    ) : (
+                      <>
+                        <Mic size={17} />
+                        {description ? "Continue speaking" : "Start voice description"}
+                      </>
+                    )}
+                  </button>
                 </div>
 
-                {/* Mic button */}
-                <button
-                  type="button"
-                  onClick={listening ? stopListening : startListening}
-                  className={`inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm font-semibold transition duration-150 ${
-                    listening
-                      ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
-                      : "border-slate-200 bg-white text-ink shadow-sm hover:border-civic/60 hover:text-civic hover:shadow-card"
-                  }`}
-                >
-                  {listening ? (
-                    <>
-                      <MicOff size={17} className="animate-pulse" />
-                      Stop recording
-                    </>
-                  ) : (
-                    <>
-                      <Mic size={17} />
-                      {description ? "Continue speaking" : "Start voice description"}
-                    </>
-                  )}
-                </button>
-                {listening && interim && (
-                  <div className="rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800 italic">
-                    <span className="mr-1 font-semibold not-italic text-teal-600">Hearing:</span>
-                    {interim}
-                    <span className="ml-1 animate-pulse">…</span>
-                  </div>
-                )}
+                {/* Live interim preview while speaking */}
                 {listening && (
-                  <p className="text-center text-xs text-slate-500">
-                    🎙️ Listening… auto-stops after 5 s of silence
-                  </p>
+                  <div className="mt-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
+                    {interim ? (
+                      <span className="italic">{interim}<span className="animate-pulse">…</span></span>
+                    ) : (
+                      <span className="text-teal-600">
+                        🎙️ Listening in {voiceLang === "hi-IN" ? "Hindi (हिन्दी)" : "English"}…
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             ) : (
