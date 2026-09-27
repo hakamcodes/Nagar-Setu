@@ -1,4 +1,4 @@
-import { LocateFixed, MapPin, MapPinned, RotateCcw, UserCog } from "lucide-react";
+import { Globe, LocateFixed, MapPin, MapPinned, RotateCcw, UserCog } from "lucide-react";
 import { useCallback, useState } from "react";
 import LocationPickerModal from "../components/map/LocationPickerModal.jsx";
 import { resetPrototypeStore } from "../services/prototypeStore.js";
@@ -10,7 +10,7 @@ import { useRegion } from "../state/RegionContext.jsx";
 import { useToast } from "../state/ToastContext.jsx";
 
 export default function Settings() {
-  const { user, updateHomeLocation } = useAuth();
+  const { user, updateHomeLocation, updateUiLang } = useAuth();
   const { activeRegion, setActiveRegion } = useRegion();
   const { showToast } = useToast();
 
@@ -18,6 +18,7 @@ export default function Settings() {
   const [locating, setLocating] = useState(false);
 
   const region = getRegion(user?.regionPreference || activeRegion);
+  const lang = user?.uiLang ?? "en";
 
   function reset() {
     resetPrototypeStore();
@@ -184,6 +185,40 @@ export default function Settings() {
             <p className="mt-3 text-sm text-slate-600">
               More regions can be added through config or Firestore records.
             </p>
+          </div>
+
+          {/* ── Language preference ── */}
+          <div className="card p-5">
+            <h2 className="flex items-center gap-2 text-xl font-black">
+              <Globe size={20} className="text-civic" /> Language
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Choose the language for the app interface. Hindi support applies to navigation labels and voice prompts.
+            </p>
+            <div className="mt-4 flex gap-3">
+              <button
+                type="button"
+                onClick={() => { updateUiLang("en"); showToast("Language set to English."); }}
+                className={`flex-1 rounded-lg border py-3 text-sm font-bold transition ${
+                  lang === "en"
+                    ? "border-civic bg-civic text-white shadow-card"
+                    : "border-slate-200 bg-white text-ink hover:border-civic/60 hover:text-civic"
+                }`}
+              >
+                🇬🇧 English
+              </button>
+              <button
+                type="button"
+                onClick={() => { updateUiLang("hi"); showToast("भाषा हिंदी में बदल दी गई।"); }}
+                className={`flex-1 rounded-lg border py-3 text-sm font-bold transition ${
+                  lang === "hi"
+                    ? "border-civic bg-civic text-white shadow-card"
+                    : "border-slate-200 bg-white text-ink hover:border-civic/60 hover:text-civic"
+                }`}
+              >
+                🇮🇳 हिंदी
+              </button>
+            </div>
           </div>
 
           {/* ── Prototype controls ── */}

@@ -49,6 +49,7 @@ async function buildUser({ uid, email, name, photoURL }) {
     role,
     zoneNumber,
     regionPreference: defaultRegionId,
+    uiLang: "en", // "en" | "hi"
     // Ward-personalisation fields — null until the user sets their home location.
     // { number, name } | null
     homeWard: null,
@@ -186,6 +187,16 @@ export function AuthProvider({ children }) {
     });
   }, []);
 
+  const updateUiLang = useCallback((lang) => {
+    setUser((current) => {
+      if (!current) return current;
+      const nextUser = { ...current, uiLang: lang };
+      upsertUser(nextUser);
+      localStorage.setItem("nagar-setu-current-user", JSON.stringify(nextUser));
+      return nextUser;
+    });
+  }, []);
+
   const value = useMemo(
     () => ({
       user,
@@ -199,8 +210,9 @@ export function AuthProvider({ children }) {
       logout,
       updateRegionPreference,
       updateHomeLocation,
+      updateUiLang,
     }),
-    [loading, logout, signInDemo, signInEmail, signInWithGoogle, signUpEmail, updateRegionPreference, updateHomeLocation, user],
+    [loading, logout, signInDemo, signInEmail, signInWithGoogle, signUpEmail, updateRegionPreference, updateHomeLocation, updateUiLang, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
