@@ -60,6 +60,25 @@ export const translations = {
     feat4Title: "Admin intelligence",
     feat4Text: "Moderators see hotspots, ward/zone trends, department performance, SLA breaches, assignments, and resolution actions.",
 
+    // ── Home — new sections ───────────────────────────────────────────────────
+    homeTagline: "Your city. Your voice. Tracked.",
+    homeTrustReported: "issues reported",
+    homeTrustResolved: "resolved",
+    homeTrustWards: "wards mapped",
+    homeLivePulse: "Live",
+    homeLastReported: "Last reported",
+    homeHowEyebrow: "Simple as 1-2-3",
+    homeHowTitle: "Report an issue in under 60 seconds.",
+    homeStep1Emoji: "📸",
+    homeStep1Title: "Take a photo",
+    homeStep1Text: "Snap the problem — a pothole, broken light, drainage overflow. The image is your evidence.",
+    homeStep2Emoji: "📍",
+    homeStep2Title: "Location auto-detected",
+    homeStep2Text: "GPS pinpoints your ward and zone instantly. No forms to fill, no manual address entry.",
+    homeStep3Emoji: "✅",
+    homeStep3Title: "Routed & tracked",
+    homeStep3Text: "The complaint is classified by AI, assigned to the right department, and you can track progress in real time.",
+
     // ── Complaint Feed ────────────────────────────────────────────────────────
     feedEyebrow: "Public feed",
     feedTitle: "Live complaints",
@@ -203,6 +222,25 @@ export const translations = {
     feat3Text: "नज़दीकी, समान, हाल की शिकायतों को नए रिकॉर्ड बनाने की बजाय समर्थन के लिए प्रमोट किया जाता है।",
     feat4Title: "एडमिन इंटेलिजेंस",
     feat4Text: "प्रशासक हॉटस्पॉट, वार्ड/ज़ोन ट्रेंड, विभाग प्रदर्शन, SLA उल्लंघन, असाइनमेंट और समाधान कार्रवाई देख सकते हैं।",
+
+    // ── Home — new sections ───────────────────────────────────────────────────
+    homeTagline: "आपका शहर। आपकी आवाज़। ट्रैक किया गया।",
+    homeTrustReported: "समस्याएं दर्ज",
+    homeTrustResolved: "सुलझाई गईं",
+    homeTrustWards: "वार्ड मैप किए",
+    homeLivePulse: "लाइव",
+    homeLastReported: "अंतिम रिपोर्ट",
+    homeHowEyebrow: "सरल है — बस 3 कदम",
+    homeHowTitle: "60 सेकंड में समस्या रिपोर्ट करें।",
+    homeStep1Emoji: "📸",
+    homeStep1Title: "फोटो लें",
+    homeStep1Text: "समस्या की फोटो खींचें — गड्ढा, टूटी बत्ती, नाली का ओवरफ्लो। फोटो ही आपका सबूत है।",
+    homeStep2Emoji: "📍",
+    homeStep2Title: "लोकेशन स्वतः पहचानी जाती है",
+    homeStep2Text: "GPS आपका वार्ड और ज़ोन तुरंत पहचान लेता है। कोई फॉर्म नहीं, कोई पता नहीं भरना।",
+    homeStep3Emoji: "✅",
+    homeStep3Title: "रूट किया और ट्रैक किया",
+    homeStep3Text: "AI शिकायत को वर्गीकृत करता है, सही विभाग को असाइन करता है, और आप रियल-टाइम में प्रगति ट्रैक कर सकते हैं।",
 
     // ── Complaint Feed ────────────────────────────────────────────────────────
     feedEyebrow: "सार्वजनिक फीड",

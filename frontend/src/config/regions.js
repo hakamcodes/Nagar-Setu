@@ -1,5 +1,4 @@
 import { bhopalDepartments, resolveBhopalDepartment } from "./departments.bhopal.js";
-import { delhiDepartments, resolveDelhiDepartment } from "./departments.delhi.js";
 
 export const issueCategories = [
   "Road Damage",
@@ -84,34 +83,14 @@ export function getDepartmentsForRegion(regionId = defaultRegionId) {
   return getRegion(regionId).departments || departments;
 }
 
-// City regions detect real municipal wards; a campus region (SATI) has no
-// wards, just named campus areas (Academic Block, hostels, grounds...), so
-// the UI label must not call them "Ward" even though they reuse the same
-// wardNumber/wardName GIS property shape internally.
+// Returns the label for an area unit — "Ward" for cities.
 export function getAreaLabel(regionId = defaultRegionId) {
-  return getRegion(regionId).type === "campus" ? "Area" : "Ward";
+  return "Ward";
 }
-
-const satiDepartmentByCategory = {
-  "Road Damage": "Civil Maintenance",
-  Garbage: "Sanitation Team",
-  Streetlight: "Electrical Department",
-  Waterlogging: "Civil Maintenance",
-  "Blocked Drain": "Sanitation Team",
-  "Water Leak": "Water Works",
-  Electrical: "Electrical Department",
-  "Hostel Maintenance": "Hostel Administration",
-  Sanitation: "Sanitation Team",
-  "Broken Furniture": "Campus Administration",
-  "Safety Hazard": "Security Office",
-  Other: "Campus Administration",
-};
 
 // Deterministic category -> department routing, kept out of the AI's hands.
 // The AI may only *suggest* a department (shown for transparency); this map
 // always decides the department actually stored on a complaint.
 export function resolveDepartmentForCategory(category, regionId = defaultRegionId) {
-  if (regionId === "bhopal") return resolveBhopalDepartment(category);
-  if (regionId === "delhi") return resolveDelhiDepartment(category);
-  return satiDepartmentByCategory[category] || departments[departments.length - 1];
+  return resolveBhopalDepartment(category);
 }
