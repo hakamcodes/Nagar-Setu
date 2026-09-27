@@ -1,5 +1,6 @@
-import { Clock, Home, Inbox, LocateFixed, MapPinned, Search, Sparkles } from "lucide-react";
+import { Clock, Home, Inbox, LocateFixed, MapPinned, Search, Sparkles, UserPlus } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import ComplaintCard from "../components/complaints/ComplaintCard.jsx";
 import LocationPickerModal from "../components/map/LocationPickerModal.jsx";
 import { complaintStatuses, getRegion, issueCategories } from "../config/regions.js";
@@ -43,6 +44,7 @@ export default function ComplaintFeed() {
   const [showMapPicker, setShowMapPicker] = useState(false);
   const [locating, setLocating] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [guestBannerDismissed, setGuestBannerDismissed] = useState(false);
 
   const userWardNumber = user?.homeWard?.number ?? null;
   const region = getRegion(user?.regionPreference || activeRegion);
@@ -127,6 +129,7 @@ export default function ComplaintFeed() {
   );
 
   const showWardBanner = isAuthenticated && !user?.homeWard && !bannerDismissed;
+  const showGuestBanner = !isAuthenticated && !guestBannerDismissed;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -212,6 +215,50 @@ export default function ComplaintFeed() {
             </span>
           )}
         </div>
+
+        {/* ── Guest sign-up banner ── */}
+        {showGuestBanner && (
+          <div className="mb-6 overflow-hidden rounded-xl border border-teal-200 bg-gradient-to-br from-teal-50 to-white shadow-sm">
+            <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-4">
+                <span className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-civic to-teal-700 text-white shadow-card">
+                  <UserPlus size={18} />
+                </span>
+                <div>
+                  <p className="text-sm font-black text-teal-900">
+                    See complaints from your ward first — and report issues yourself
+                  </p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-teal-700">
+                    You're viewing all public complaints. Sign up to get a personalised feed for your home ward, receive notifications, and report issues directly.
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <Link
+                  to="/signin"
+                  state={{ signUpMode: true }}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-civic px-4 py-2 text-xs font-bold text-white shadow-card transition hover:-translate-y-px hover:bg-teal-800 hover:shadow-glow"
+                >
+                  <UserPlus size={13} />
+                  Sign up free
+                </Link>
+                <Link
+                  to="/signin"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-teal-300 bg-white px-4 py-2 text-xs font-semibold text-teal-800 shadow-sm transition hover:bg-teal-50"
+                >
+                  Sign in
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setGuestBannerDismissed(true)}
+                  className="text-xs text-teal-400 underline transition hover:text-teal-600"
+                >
+                  Maybe later
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Ward setup banner ── */}
         {showWardBanner && (

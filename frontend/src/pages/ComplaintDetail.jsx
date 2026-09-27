@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Clock3, MapPin, ThumbsUp, Undo2, Upload } from "lucide-react";
+import { ArrowLeft, Clock3, LogIn, MapPin, ThumbsUp, Undo2, Upload } from "lucide-react";
 import MapPanel from "../components/map/MapPanel.jsx";
 import Timeline from "../components/complaints/Timeline.jsx";
 import { Badge, PriorityBadge, StatusBadge } from "../components/ui/Badge.jsx";
@@ -124,10 +124,21 @@ export default function ComplaintDetail() {
           </Link>
           <h1 className="mt-2 text-3xl font-black tracking-tight">{complaint.aiSummary}</h1>
         </div>
-        <button type="button" className="btn-primary" onClick={handleSupport}>
-          <ThumbsUp size={17} />
-          Support ({complaint.supportCount || 0})
-        </button>
+        {user ? (
+          <button type="button" className="btn-primary shrink-0" onClick={handleSupport}>
+            <ThumbsUp size={17} />
+            Support ({complaint.supportCount || 0})
+          </button>
+        ) : (
+          <Link
+            to="/signin"
+            state={{ from: { pathname: `/complaints/${complaintId}` } }}
+            className="inline-flex shrink-0 items-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-4 py-2.5 text-sm font-semibold text-teal-800 shadow-sm transition hover:bg-teal-100"
+          >
+            <LogIn size={17} />
+            Sign in to support ({complaint.supportCount || 0})
+          </Link>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_0.8fr]">
